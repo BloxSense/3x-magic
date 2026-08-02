@@ -28,8 +28,11 @@ if command -v x-ui &> /dev/null; then
         echo "Отмена. Скрипт завершает работу."
         exit 1
     fi
-    echo "Удаление x-ui..."
-    /usr/local/x-ui/x-ui uninstall -y &>/dev/null || true
+    echo "Удаление x-ui и очистка процессов..."
+    systemctl stop x-ui 2>/dev/null
+    systemctl disable x-ui 2>/dev/null
+    killall -9 x-ui 2>/dev/null
+    killall -9 xray-linux-amd64 2>/dev/null
     rm -rf /usr/local/x-ui /etc/x-ui /usr/bin/x-ui /etc/systemd/system/x-ui.service
     systemctl daemon-reexec
     systemctl daemon-reload
@@ -66,6 +69,8 @@ gen_random_string() {
 USERNAME=$(gen_random_string 10)
 PASSWORD=$(gen_random_string 10)
 WEBPATH=$(gen_random_string 18)
+# Строгий формат пути, как требует API 3x-ui
+WEB_BASE_PATH="/${WEBPATH}/"
 
 VLESS_PORTS=(8443 4443)
 INBOUND_PORT=${VLESS_PORTS[$RANDOM % ${#VLESS_PORTS[@]}]}
@@ -152,8 +157,6 @@ if ! wget -q -O "$FILE" "$URL1"; then
     exit 1
 fi
 
-systemctl stop x-ui 2>/dev/null
-rm -rf /usr/local/x-ui/
 tar -xzf "$FILE"
 rm -f "$FILE"
 
@@ -162,6 +165,7 @@ chmod +x x-ui
 [[ "$ARCH" == armv* ]] && mv bin/xray-linux-${ARCH} bin/xray-linux-arm && chmod +x bin/xray-linux-arm
 chmod +x x-ui bin/xray-linux-${ARCH}
 
+# Обязательное создание папки для БД
 mkdir -p /etc/x-ui/
 
 cat > /etc/systemd/system/x-ui.service <<EOF
@@ -187,8 +191,9 @@ FILE_SH="/usr/bin/x-ui"
 wget -q -O "$FILE_SH" "$URL_SH" || true
 chmod +x /usr/local/x-ui/x-ui.sh /usr/bin/x-ui 2>/dev/null || true
 
+# Установка данных напрямую в базу (с правильным путем)
 cd /usr/local/x-ui/ || exit 1
-./x-ui setting -username "$USERNAME" -password "$PASSWORD" -port "$PORT" -webBasePath "$WEBPATH" >>"$LOG_FILE" 2>&1
+./x-ui setting -username "$USERNAME" -password "$PASSWORD" -port "$PORT" -webBasePath "$WEB_BASE_PATH" >>"$LOG_FILE" 2>&1
 ./x-ui migrate >>"$LOG_FILE" 2>&1
 
 systemctl daemon-reload >>"$LOG_FILE" 2>&1
@@ -197,9 +202,13 @@ systemctl start x-ui >>"$LOG_FILE" 2>&1
 
 echo -e "${yellow}Ожидаем запуска панели...${plain}" >&3
 PANEL_READY=false
+LOGIN_URL="http://127.0.0.1:${PORT}${WEB_BASE_PATH}login"
+
 for i in {1..15}; do
     sleep 2
-    if curl -s --max-time 2 "http://127.0.0.1:${PORT}/${WEBPATH}/login" | grep -q "html" 2>/dev/null; then
+    # Проверяем не просто html, а реальный HTTP-ответ (200 OK или 302 Редирект)
+    HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 2 "$LOGIN_URL")
+    if [[ "$HTTP_CODE" == "200" || "$HTTP_CODE" == "302" ]]; then
         echo -e "${green}Панель готова.${plain}" >&3
         PANEL_READY=true
         break
@@ -207,7 +216,9 @@ for i in {1..15}; do
 done
 
 if [[ "$PANEL_READY" == false ]]; then
-    echo -e "${red}Критическая ошибка: панель 3x-ui не запустилась. Проверь логи: journalctl -u x-ui -e${plain}" >&3
+    echo -e "${red}Критическая ошибка: панель 3x-ui не запустилась на порту ${PORT}!${plain}" >&3
+    echo -e "${yellow}Последние логи из systemd:${plain}" >&3
+    journalctl -u x-ui --no-pager -n 15 >&3
     exit 1
 fi
 
@@ -224,13 +235,12 @@ PUBLIC_KEY=$(echo "$KEYS" | grep -i "Password" | sed -E 's/.*Password:\s*//')
 SHORT_ID=$(head -c 8 /dev/urandom | xxd -p)
 
 COOKIE_JAR=$(mktemp)
-LOGIN_RESPONSE=$(curl -s -c "$COOKIE_JAR" -X POST "http://127.0.0.1:${PORT}/${WEBPATH}/login" \
+LOGIN_RESPONSE=$(curl -s -c "$COOKIE_JAR" -X POST "$LOGIN_URL" \
   -H "Content-Type: application/json" \
   -d "{\"username\": \"${USERNAME}\", \"password\": \"${PASSWORD}\"}")
 
 if ! echo "$LOGIN_RESPONSE" | grep -q '"success":true'; then
-    echo -e "${red}Ошибка авторизации в 3x-ui API. Ответ сервера:${plain}" >&3
-    echo "$LOGIN_RESPONSE" >&3
+    echo -e "${red}Ошибка авторизации в 3x-ui API. Учетные данные не подошли.${plain}" >&3
     exit 1
 fi
 
@@ -240,15 +250,11 @@ HY2_TAG="in-${HY2_PORT}-udp"
 VLESS_SETTINGS_JSON=$(jq -nc \
   --arg uuid "$CLIENT_UUID" \
   --arg email "$CLIENT_EMAIL" \
-  --arg pass "$CLIENT_PASS" \
-  --arg sub "$CLIENT_SUB_ID" \
-  --arg hyauth "$HY2_AUTH" '{
+  --arg sub "$CLIENT_SUB_ID" '{
   clients: [{
     id: $uuid,
-    password: $pass,
     email: $email,
     subId: $sub,
-    hysteria: {auth: $hyauth},
     flow: "xtls-rprx-vision",
     enable: true
   }],
@@ -276,7 +282,7 @@ VLESS_STREAM_SETTINGS_JSON=$(jq -nc \
 
 SNIFFING_JSON=$(jq -nc '{enabled: true, destOverride: ["http", "tls"]}')
 
-curl -s -b "$COOKIE_JAR" -X POST "http://127.0.0.1:${PORT}/${WEBPATH}/panel/api/inbounds/add" \
+curl -s -b "$COOKIE_JAR" -X POST "http://127.0.0.1:${PORT}${WEB_BASE_PATH}panel/api/inbounds/add" \
   -H "Content-Type: application/json" \
   -d "$(jq -nc \
     --argjson settings "$VLESS_SETTINGS_JSON" \
@@ -321,7 +327,7 @@ HY2_STREAM_SETTINGS_JSON=$(jq -nc \
   }
 }')
 
-curl -s -b "$COOKIE_JAR" -X POST "http://127.0.0.1:${PORT}/${WEBPATH}/panel/api/inbounds/add" \
+curl -s -b "$COOKIE_JAR" -X POST "http://127.0.0.1:${PORT}${WEB_BASE_PATH}panel/api/inbounds/add" \
   -H "Content-Type: application/json" \
   -d "$(jq -nc \
     --argjson settings "$HY2_SETTINGS_JSON" \
@@ -361,12 +367,12 @@ if [[ "$INSTALL_WARP" == true ]]; then
 
     XRAY_CONFIG_ENCODED=$(echo "$XRAY_CONFIG" | jq -sRr @uri)
 
-    curl -s -b "$COOKIE_JAR" -X POST "http://127.0.0.1:${PORT}/${WEBPATH}/panel/xray/update" \
+    curl -s -b "$COOKIE_JAR" -X POST "http://127.0.0.1:${PORT}${WEB_BASE_PATH}panel/xray/update" \
       -H "Content-Type: application/x-www-form-urlencoded" \
       --data-raw "xraySetting=${XRAY_CONFIG_ENCODED}" >>"$LOG_FILE" 2>&1
 fi
 
-curl -s -b "$COOKIE_JAR" -X POST "http://127.0.0.1:${PORT}/${WEBPATH}/server/restartXrayService" >>"$LOG_FILE" 2>&1
+curl -s -b "$COOKIE_JAR" -X POST "http://127.0.0.1:${PORT}${WEB_BASE_PATH}server/restartXrayService" >>"$LOG_FILE" 2>&1
 rm -f "$COOKIE_JAR"
 
 if [[ "$INSTALL_WARP" == true ]]; then
@@ -399,7 +405,7 @@ echo ""
 echo -e "\033[1;32m══════════════════════════════════════\033[0m" >&3
 echo -e "\033[1;32m  Панель 3X-UI (v3.6.0)\033[0m" >&3
 echo -e "\033[1;32m══════════════════════════════════════\033[0m" >&3
-echo -e "Адрес:  ${cyan}http://${SERVER_IP}:${PORT}/${WEBPATH}${plain}" >&3
+echo -e "Адрес:  ${cyan}http://${SERVER_IP}:${PORT}${WEB_BASE_PATH}${plain}" >&3
 echo -e "Логин:  \033[1;33m${USERNAME}\033[0m" >&3
 echo -e "Пароль: \033[1;33m${PASSWORD}\033[0m" >&3
 echo ""
@@ -423,7 +429,7 @@ echo ""
 echo "======================================"
 echo "  Панель 3X-UI (v3.6.0)"
 echo "======================================"
-echo "Адрес:  http://${SERVER_IP}:${PORT}/${WEBPATH}"
+echo "Адрес:  http://${SERVER_IP}:${PORT}${WEB_BASE_PATH}"
 echo "Логин:  ${USERNAME}"
 echo "Пароль: ${PASSWORD}"
 } >> /root/3x-ui.txt
