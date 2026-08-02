@@ -188,12 +188,10 @@ FILE_SH="/usr/bin/x-ui"
 wget -q -O "$FILE_SH" "$URL_SH" || true
 chmod +x /usr/local/x-ui/x-ui.sh /usr/bin/x-ui 2>/dev/null || true
 
-# Записываем настройки в базу данных ДО запуска службы
 cd /usr/local/x-ui/ || exit 1
 ./x-ui migrate >>"$LOG_FILE" 2>&1
 ./x-ui setting -username "$USERNAME" -password "$PASSWORD" -port "$PORT" -webBasePath "/${WEBPATH}/" >>"$LOG_FILE" 2>&1
 
-# Запускаем службу один раз
 echo -e "${yellow}Запуск панели 3x-ui...${plain}" >&3
 systemctl daemon-reload >>"$LOG_FILE" 2>&1
 systemctl enable x-ui >>"$LOG_FILE" 2>&1
@@ -204,12 +202,11 @@ PANEL_READY=false
 API_BASE_URL="http://127.0.0.1:${PORT}/${WEBPATH}"
 COOKIE_JAR=$(mktemp)
 
-for i in {1..25}; do
+for i in {1..30}; do
     sleep 2
     LOGIN_RESPONSE=$(curl -s -L -c "$COOKIE_JAR" -X POST "${API_BASE_URL}/login" \
-      -H "Accept: application/json" \
-      --data-urlencode "username=${USERNAME}" \
-      --data-urlencode "password=${PASSWORD}")
+      -H "Content-Type: application/json" \
+      -d "{\"username\": \"${USERNAME}\", \"password\": \"${PASSWORD}\"}")
     
     if echo "$LOGIN_RESPONSE" | grep -q '"success":true'; then
         echo -e "${green}Панель готова, успешная авторизация!${plain}" >&3
