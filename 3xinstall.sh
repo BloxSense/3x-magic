@@ -144,7 +144,7 @@ arch() {
 }
 ARCH=$(arch)
 
-echo -e "${yellow}Скачивание и установка 3x-ui версии v3.6.0...${plain}" >&3
+echo -e "${yellow}Скачивание и распаковка 3x-ui версии v3.6.0...${plain}" >&3
 cd /usr/local/ || exit 1
 VERSION="v3.6.0"
 URL1="https://github.com/MHSanaei/3x-ui/releases/download/${VERSION}/x-ui-linux-${ARCH}.tar.gz"
@@ -188,25 +188,32 @@ FILE_SH="/usr/bin/x-ui"
 wget -q -O "$FILE_SH" "$URL_SH" || true
 chmod +x /usr/local/x-ui/x-ui.sh /usr/bin/x-ui 2>/dev/null || true
 
-cd /usr/local/x-ui/ || exit 1
-./x-ui setting -username "$USERNAME" -password "$PASSWORD" -port "$PORT" -webBasePath "${WEBPATH}" >>"$LOG_FILE" 2>&1
-./x-ui migrate >>"$LOG_FILE" 2>&1
-
+# 1. Сначала запускаем чистую панель для инициализации базы данных
+echo -e "${yellow}Инициализация базы данных панели...${plain}" >&3
 systemctl daemon-reload >>"$LOG_FILE" 2>&1
 systemctl enable x-ui >>"$LOG_FILE" 2>&1
 systemctl start x-ui >>"$LOG_FILE" 2>&1
 
-echo -e "${yellow}Ожидаем запуска панели и проверяем авторизацию API...${plain}" >&3
+# Ждем, пока Go сервер создаст таблицы
+sleep 5
+
+# 2. Теперь применяем наши настройки поверх готовой базы
+cd /usr/local/x-ui/ || exit 1
+./x-ui setting -username "$USERNAME" -password "$PASSWORD" -port "$PORT" -webBasePath "/${WEBPATH}/" >>"$LOG_FILE" 2>&1
+
+# Перезапускаем панель, чтобы применить настройки
+systemctl restart x-ui >>"$LOG_FILE" 2>&1
+
+echo -e "${yellow}Ожидаем применения настроек и проверяем авторизацию API...${plain}" >&3
 PANEL_READY=false
 API_BASE_URL="http://127.0.0.1:${PORT}/${WEBPATH}"
 COOKIE_JAR=$(mktemp)
 
-# Ждём до 60 секунд. Отправляем данные правильно (через --data-urlencode).
-for i in {1..30}; do
+for i in {1..20}; do
     sleep 2
-    LOGIN_RESPONSE=$(curl -s -L -c "$COOKIE_JAR" -X POST "${API_BASE_URL}/login" \
-      --data-urlencode "username=${USERNAME}" \
-      --data-urlencode "password=${PASSWORD}")
+    LOGIN_RESPONSE=$(curl -s -c "$COOKIE_JAR" -X POST "${API_BASE_URL}/login" \
+      -H "Content-Type: application/json" \
+      -d "{\"username\": \"${USERNAME}\", \"password\": \"${PASSWORD}\"}")
     
     if echo "$LOGIN_RESPONSE" | grep -q '"success":true'; then
         echo -e "${green}Панель готова, успешная авторизация!${plain}" >&3
@@ -217,6 +224,8 @@ done
 
 if [[ "$PANEL_READY" == false ]]; then
     echo -e "${red}Критическая ошибка: не удалось авторизоваться в панели после запуска!${plain}" >&3
+    echo -e "URL: ${API_BASE_URL}/login" >&3
+    echo -e "User: ${USERNAME} | Pass: ${PASSWORD}" >&3
     echo -e "Ответ сервера API: ${LOGIN_RESPONSE}" >&3
     echo -e "${yellow}Последние логи из systemd:${plain}" >&3
     journalctl -u x-ui --no-pager -n 15 >&3
