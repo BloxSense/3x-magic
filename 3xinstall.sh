@@ -127,14 +127,52 @@ openssl req -x509 -nodes -newkey ec -pkeyopt ec_paramgen_curve:P-256 \
     -subj "/CN=${SERVER_IP}" \
     -addext "subjectAltName=IP:${SERVER_IP}" >>"$LOG_FILE" 2>&1
 
-echo -e "${yellow}Запуск официального установщика 3x-ui (версия 3.6.0+)...${plain}" >&3
-bash <(curl -Ls https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh) <<EOF >>"$LOG_FILE" 2>&1
-y
-${USERNAME}
-${PASSWORD}
-${PORT}
-${WEBPATH}
-EOF
+arch() {
+    case "$(uname -m)" in
+        x86_64 | x64 | amd64) echo 'amd64' ;;
+        i*86 | x86) echo '386' ;;
+        armv8* | arm64 | aarch64) echo 'arm64' ;;
+        armv7* | arm) echo 'armv7' ;;
+        armv6*) echo 'armv6' ;;
+        armv5*) echo 'armv5' ;;
+        s390x) echo 's390x' ;;
+        *) echo "unknown" ;;
+    esac
+}
+ARCH=$(arch)
+
+echo -e "${yellow}Скачивание и установка 3x-ui строго версии v3.6.0...${plain}" >&3
+cd /usr/local/ || exit 1
+VERSION="v3.6.0"
+URL1="https://github.com/MHSanaei/3x-ui/releases/download/${VERSION}/x-ui-linux-${ARCH}.tar.gz"
+FILE="x-ui-linux-${ARCH}.tar.gz"
+
+if ! wget -q -O "$FILE" "$URL1"; then
+    echo -e "${red}Ошибка: не удалось скачать 3x-ui версии ${VERSION}${plain}" >&3
+    exit 1
+fi
+
+systemctl stop x-ui 2>/dev/null
+rm -rf /usr/local/x-ui/
+tar -xzf "$FILE"
+rm -f "$FILE"
+
+cd x-ui || exit 1
+chmod +x x-ui
+[[ "$ARCH" == armv* ]] && mv bin/xray-linux-${ARCH} bin/xray-linux-arm && chmod +x bin/xray-linux-arm
+chmod +x x-ui bin/xray-linux-${ARCH}
+cp -f x-ui.service /etc/systemd/system/
+
+URL_SH="https://raw.githubusercontent.com/MHSanaei/3x-ui/${VERSION}/x-ui.sh"
+FILE_SH="/usr/bin/x-ui"
+wget -q -O "$FILE_SH" "$URL_SH" || true
+chmod +x /usr/local/x-ui/x-ui.sh /usr/bin/x-ui 2>/dev/null || true
+
+/usr/local/x-ui/x-ui setting -username "$USERNAME" -password "$PASSWORD" -port "$PORT" -webBasePath "$WEBPATH" >>"$LOG_FILE" 2>&1
+/usr/local/x-ui/x-ui migrate >>"$LOG_FILE" 2>&1
+systemctl daemon-reload >>"$LOG_FILE" 2>&1
+systemctl enable x-ui >>"$LOG_FILE" 2>&1
+systemctl start x-ui >>"$LOG_FILE" 2>&1
 
 echo -e "${yellow}Ожидаем запуска панели...${plain}" >&3
 for i in {1..15}; do
@@ -152,12 +190,6 @@ if [[ "$INSTALL_WARP" == true ]]; then
     rm -f /tmp/warp_menu.sh
 fi
 
-ARCH=$(uname -m)
-case "$ARCH" in
-    x86_64) ARCH="amd64" ;;
-    aarch64) ARCH="arm64" ;;
-esac
-
 KEYS=$(/usr/local/x-ui/bin/xray-linux-${ARCH} x25519)
 PRIVATE_KEY=$(echo "$KEYS" | grep -i "Private" | sed -E 's/.*Key:\s*//')
 PUBLIC_KEY=$(echo "$KEYS" | grep -i "Password" | sed -E 's/.*Password:\s*//')
@@ -169,14 +201,14 @@ LOGIN_RESPONSE=$(curl -s -c "$COOKIE_JAR" -X POST "http://127.0.0.1:${PORT}/${WE
   -d "{\"username\": \"${USERNAME}\", \"password\": \"${PASSWORD}\"}")
 
 if ! echo "$LOGIN_RESPONSE" | grep -q '"success":true'; then
-    echo -e "${red}Ошибка авторизации в 3x-ui API.${plain}" >&3
+    echo -e "${red}Ошибка авторизации в 3x-ui API. Ответ сервера:${plain}" >&3
+    echo "$LOGIN_RESPONSE" >&3
     exit 1
 fi
 
 VLESS_TAG="in-${INBOUND_PORT}-tcp"
 HY2_TAG="in-${HY2_PORT}-udp"
 
-# === VLESS JSON ===
 VLESS_SETTINGS_JSON=$(jq -nc \
   --arg uuid "$CLIENT_UUID" \
   --arg email "$CLIENT_EMAIL" \
@@ -227,7 +259,6 @@ curl -s -b "$COOKIE_JAR" -X POST "http://127.0.0.1:${PORT}/${WEBPATH}/panel/api/
     '{enable: true, remark: $tag, listen: "", port: $port, protocol: "vless", tag: $tag,
       settings: ($settings | tostring), streamSettings: ($stream | tostring), sniffing: ($sniffing | tostring)}')" >>"$LOG_FILE" 2>&1
 
-# === Hysteria 2 JSON ===
 HY2_SETTINGS_JSON=$(jq -nc \
   --arg uuid "$CLIENT_UUID" \
   --arg email "$CLIENT_EMAIL" \
@@ -273,8 +304,6 @@ curl -s -b "$COOKIE_JAR" -X POST "http://127.0.0.1:${PORT}/${WEBPATH}/panel/api/
     '{enable: true, remark: $tag, listen: "", port: $port, protocol: "hysteria", tag: $tag,
       settings: ($settings | tostring), streamSettings: ($stream | tostring), sniffing: ($sniffing | tostring)}')" >>"$LOG_FILE" 2>&1
 
-
-# === WARP Routing ===
 if [[ "$INSTALL_WARP" == true ]]; then
     XRAY_CONFIG=$(jq -nc --arg vlesstag "$VLESS_TAG" '{
       log: {access: "none", dnsLog: false, error: "", loglevel: "warning", maskAddress: ""},
@@ -340,7 +369,7 @@ qrencode -t ANSIUTF8 "$HY2_LINK"
 echo ""
 
 echo -e "\033[1;32m══════════════════════════════════════\033[0m" >&3
-echo -e "\033[1;32m  Панель 3X-UI\033[0m" >&3
+echo -e "\033[1;32m  Панель 3X-UI (v3.6.0)\033[0m" >&3
 echo -e "\033[1;32m══════════════════════════════════════\033[0m" >&3
 echo -e "Адрес:  ${cyan}http://${SERVER_IP}:${PORT}/${WEBPATH}${plain}" >&3
 echo -e "Логин:  \033[1;33m${USERNAME}\033[0m" >&3
@@ -364,7 +393,7 @@ echo ""
 echo "Инбаунд: in-${HY2_PORT}-udp | Порт: ${HY2_PORT} | SNI: ${BEST_DOMAIN}"
 echo ""
 echo "======================================"
-echo "  Панель 3X-UI"
+echo "  Панель 3X-UI (v3.6.0)"
 echo "======================================"
 echo "Адрес:  http://${SERVER_IP}:${PORT}/${WEBPATH}"
 echo "Логин:  ${USERNAME}"
