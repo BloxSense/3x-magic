@@ -189,7 +189,8 @@ wget -q -O "$FILE_SH" "$URL_SH" || true
 chmod +x /usr/local/x-ui/x-ui.sh /usr/bin/x-ui 2>/dev/null || true
 
 cd /usr/local/x-ui/ || exit 1
-./x-ui setting -username "$USERNAME" -password "$PASSWORD" -port "$PORT" -webBasePath "/${WEBPATH}/" >>"$LOG_FILE" 2>&1
+# Прямая запись пути без слэшей, панель 3x-ui сама добавит их при запуске
+./x-ui setting -username "$USERNAME" -password "$PASSWORD" -port "$PORT" -webBasePath "${WEBPATH}" >>"$LOG_FILE" 2>&1
 ./x-ui migrate >>"$LOG_FILE" 2>&1
 
 systemctl daemon-reload >>"$LOG_FILE" 2>&1
@@ -198,12 +199,12 @@ systemctl start x-ui >>"$LOG_FILE" 2>&1
 
 echo -e "${yellow}Ожидаем запуска панели...${plain}" >&3
 PANEL_READY=false
-LOGIN_URL="http://127.0.0.1:${PORT}/${WEBPATH}/login"
 
-# Ждем до 40 секунд (на случай если Xray перезапускается)
 for i in {1..20}; do
     sleep 2
-    if curl -s -m 2 "$LOGIN_URL" | grep -qi "html"; then
+    # Проверяем код ответа сервера, разрешая редиректы (-L)
+    HTTP_CODE=$(curl -s -L -o /dev/null -w "%{http_code}" -m 2 "http://127.0.0.1:${PORT}/${WEBPATH}/")
+    if [[ "$HTTP_CODE" == "200" || "$HTTP_CODE" == "302" || "$HTTP_CODE" == "401" ]]; then
         echo -e "${green}Панель готова.${plain}" >&3
         PANEL_READY=true
         break
@@ -232,7 +233,6 @@ PUBLIC_KEY=$(echo "$KEYS" | grep -i "Password" | sed -E 's/.*Password:\s*//')
 SHORT_ID=$(head -c 8 /dev/urandom | xxd -p)
 
 COOKIE_JAR=$(mktemp)
-# Исправленный чистый путь для API
 API_BASE_URL="http://127.0.0.1:${PORT}/${WEBPATH}"
 
 LOGIN_RESPONSE=$(curl -s -c "$COOKIE_JAR" -X POST "${API_BASE_URL}/login" \
