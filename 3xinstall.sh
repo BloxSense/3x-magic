@@ -161,7 +161,24 @@ cd x-ui || exit 1
 chmod +x x-ui
 [[ "$ARCH" == armv* ]] && mv bin/xray-linux-${ARCH} bin/xray-linux-arm && chmod +x bin/xray-linux-arm
 chmod +x x-ui bin/xray-linux-${ARCH}
-cp -f x-ui.service /etc/systemd/system/
+
+# Создаем файл сервиса вручную
+cat > /etc/systemd/system/x-ui.service <<EOF
+[Unit]
+Description=3x-ui Service
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+User=root
+ExecStart=/usr/local/x-ui/x-ui
+Restart=on-failure
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target
+EOF
 
 URL_SH="https://raw.githubusercontent.com/MHSanaei/3x-ui/${VERSION}/x-ui.sh"
 FILE_SH="/usr/bin/x-ui"
@@ -303,6 +320,7 @@ curl -s -b "$COOKIE_JAR" -X POST "http://127.0.0.1:${PORT}/${WEBPATH}/panel/api/
     --argjson port "$HY2_PORT" \
     '{enable: true, remark: $tag, listen: "", port: $port, protocol: "hysteria", tag: $tag,
       settings: ($settings | tostring), streamSettings: ($stream | tostring), sniffing: ($sniffing | tostring)}')" >>"$LOG_FILE" 2>&1
+
 
 if [[ "$INSTALL_WARP" == true ]]; then
     XRAY_CONFIG=$(jq -nc --arg vlesstag "$VLESS_TAG" '{
