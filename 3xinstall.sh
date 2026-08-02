@@ -188,7 +188,7 @@ FILE_SH="/usr/bin/x-ui"
 wget -q -O "$FILE_SH" "$URL_SH" || true
 chmod +x /usr/local/x-ui/x-ui.sh /usr/bin/x-ui 2>/dev/null || true
 
-# 1. Сначала запускаем чистую панель для инициализации базы данных
+# 1. Запускаем чистую панель для инициализации базы данных
 echo -e "${yellow}Инициализация базы данных панели...${plain}" >&3
 systemctl daemon-reload >>"$LOG_FILE" 2>&1
 systemctl enable x-ui >>"$LOG_FILE" 2>&1
@@ -197,11 +197,11 @@ systemctl start x-ui >>"$LOG_FILE" 2>&1
 # Ждем, пока Go сервер создаст таблицы
 sleep 5
 
-# 2. Теперь применяем наши настройки поверх готовой базы
+# 2. Применяем наши настройки поверх готовой базы
 cd /usr/local/x-ui/ || exit 1
 ./x-ui setting -username "$USERNAME" -password "$PASSWORD" -port "$PORT" -webBasePath "/${WEBPATH}/" >>"$LOG_FILE" 2>&1
 
-# Перезапускаем панель, чтобы применить настройки
+# Перезапускаем панель, чтобы настройки применились
 systemctl restart x-ui >>"$LOG_FILE" 2>&1
 
 echo -e "${yellow}Ожидаем применения настроек и проверяем авторизацию API...${plain}" >&3
@@ -209,11 +209,13 @@ PANEL_READY=false
 API_BASE_URL="http://127.0.0.1:${PORT}/${WEBPATH}"
 COOKIE_JAR=$(mktemp)
 
+# Пуленепробиваемый цикл: правильный URL-encoded запрос для входа!
 for i in {1..20}; do
     sleep 2
-    LOGIN_RESPONSE=$(curl -s -c "$COOKIE_JAR" -X POST "${API_BASE_URL}/login" \
-      -H "Content-Type: application/json" \
-      -d "{\"username\": \"${USERNAME}\", \"password\": \"${PASSWORD}\"}")
+    LOGIN_RESPONSE=$(curl -s -L -c "$COOKIE_JAR" -X POST "${API_BASE_URL}/login" \
+      -H "Accept: application/json" \
+      --data-urlencode "username=${USERNAME}" \
+      --data-urlencode "password=${PASSWORD}")
     
     if echo "$LOGIN_RESPONSE" | grep -q '"success":true'; then
         echo -e "${green}Панель готова, успешная авторизация!${plain}" >&3
@@ -250,6 +252,7 @@ SHORT_ID=$(head -c 8 /dev/urandom | xxd -p)
 VLESS_TAG="in-${INBOUND_PORT}-tcp"
 HY2_TAG="in-${HY2_PORT}-udp"
 
+# Для остальных API-запросов (создание инбаундов) панель всё так же ждёт JSON
 VLESS_SETTINGS_JSON=$(jq -nc \
   --arg uuid "$CLIENT_UUID" \
   --arg email "$CLIENT_EMAIL" \
