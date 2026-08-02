@@ -21,7 +21,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 if command -v x-ui &> /dev/null; then
-    echo "Обнаружена установленная панель x-ui."
+    echo "Обнаружена установленная панель 3x-ui."
     read -p "Вы хотите переустановить x-ui? [y/N]: " confirm
     confirm=${confirm,,}
     if [[ "$confirm" != "y" && "$confirm" != "yes" ]]; then
@@ -111,58 +111,10 @@ net.ipv4.tcp_slow_start_after_idle=0
 net.ipv4.tcp_mtu_probing=1
 EOF
     sysctl -p "$SYSCTL_CONF" >>"$LOG_FILE" 2>&1
-    CURRENT_CC=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null)
-    if [[ "$CURRENT_CC" == "bbr" ]]; then
-        echo -e "${green}TCP BBR включён.${plain}" >&3
-    else
-        echo -e "${yellow}BBR не применился (текущий: ${CURRENT_CC}).${plain}" >&3
-    fi
-else
-    echo -e "${yellow}Ядро не поддерживает BBR. Пропускаем.${plain}" >&3
 fi
 
-if [[ -f /etc/os-release ]]; then
-    source /etc/os-release
-    release=$ID
-else
-    echo "Не удалось определить ОС" >&3
-    exit 1
-fi
-
-arch() {
-    case "$(uname -m)" in
-        x86_64 | x64 | amd64) echo 'amd64' ;;
-        i*86 | x86) echo '386' ;;
-        armv8* | arm64 | aarch64) echo 'arm64' ;;
-        armv7* | arm) echo 'armv7' ;;
-        armv6*) echo 'armv6' ;;
-        armv5*) echo 'armv5' ;;
-        s390x) echo 's390x' ;;
-        *) echo "unknown" ;;
-    esac
-}
-ARCH=$(arch)
-
-case "${release}" in
-    ubuntu | debian | armbian)
-        apt-get update > /dev/null 2>&1
-        apt-get install -y -q wget curl tar tzdata jq xxd qrencode openssl > /dev/null 2>&1 ;;
-    centos | rhel | almalinux | rocky | ol)
-        yum -y update > /dev/null 2>&1
-        yum install -y -q wget curl tar tzdata jq xxd qrencode openssl > /dev/null 2>&1 ;;
-    fedora | amzn | virtuozzo)
-        dnf -y update > /dev/null 2>&1
-        dnf install -y -q wget curl tar tzdata jq xxd qrencode openssl > /dev/null 2>&1 ;;
-    arch | manjaro | parch)
-        pacman -Syu --noconfirm > /dev/null 2>&1
-        pacman -S --noconfirm wget curl tar tzdata jq xxd qrencode openssl > /dev/null 2>&1 ;;
-    opensuse-tumbleweed)
-        zypper refresh > /dev/null 2>&1
-        zypper install -y wget curl tar timezone jq xxd qrencode openssl > /dev/null 2>&1 ;;
-    *)
-        apt-get update > /dev/null 2>&1
-        apt-get install -y wget curl tar tzdata jq xxd qrencode openssl > /dev/null 2>&1 ;;
-esac
+apt-get update -y >/dev/null 2>&1 || yum update -y >/dev/null 2>&1
+apt-get install -y curl jq tar qrencode openssl >/dev/null 2>&1 || yum install -y curl jq tar qrencode openssl >/dev/null 2>&1
 
 SERVER_IP=$(curl -s --max-time 3 https://api.ipify.org || curl -s --max-time 3 https://4.ident.me)
 
@@ -175,40 +127,14 @@ openssl req -x509 -nodes -newkey ec -pkeyopt ec_paramgen_curve:P-256 \
     -subj "/CN=${SERVER_IP}" \
     -addext "subjectAltName=IP:${SERVER_IP}" >>"$LOG_FILE" 2>&1
 
-cd /usr/local/ || exit 1
-URL1="https://github.com/MHSanaei/3x-ui/releases/download/v2.6.7/x-ui-linux-${ARCH}.tar.gz"
-URL2="https://files.yukikras.net/3x-ui/v2.6.7.x-ui-linux-${ARCH}.tar.gz"
-FILE="x-ui-linux-${ARCH}.tar.gz"
-
-if ! wget -q -O "$FILE" "$URL1"; then
-    echo "Не удалось скачать с GitHub, пробую зеркало..."
-    wget -q -O "$FILE" "$URL2" || { echo "Ошибка: не удалось скачать файл"; exit 1; }
-fi
-
-systemctl stop x-ui 2>/dev/null
-rm -rf /usr/local/x-ui/
-tar -xzf x-ui-linux-${ARCH}.tar.gz
-rm -f x-ui-linux-${ARCH}.tar.gz
-
-cd x-ui || exit 1
-chmod +x x-ui
-[[ "$ARCH" == armv* ]] && mv bin/xray-linux-${ARCH} bin/xray-linux-arm && chmod +x bin/xray-linux-arm
-chmod +x x-ui bin/xray-linux-${ARCH}
-cp -f x-ui.service /etc/systemd/system/
-
-URL1="https://raw.githubusercontent.com/MHSanaei/3x-ui/main/x-ui.sh"
-URL2="https://files.yukikras.net/3x-ui/x-ui.sh"
-FILE="/usr/bin/x-ui"
-if ! wget -q -O "$FILE" "$URL1"; then
-    wget -q -O "$FILE" "$URL2" || { echo "Ошибка: не удалось скачать x-ui.sh"; exit 1; }
-fi
-chmod +x /usr/local/x-ui/x-ui.sh /usr/bin/x-ui
-
-/usr/local/x-ui/x-ui setting -username "$USERNAME" -password "$PASSWORD" -port "$PORT" -webBasePath "$WEBPATH" >>"$LOG_FILE" 2>&1
-/usr/local/x-ui/x-ui migrate >>"$LOG_FILE" 2>&1
-systemctl daemon-reload >>"$LOG_FILE" 2>&1
-systemctl enable x-ui >>"$LOG_FILE" 2>&1
-systemctl start x-ui >>"$LOG_FILE" 2>&1
+echo -e "${yellow}Запуск официального установщика 3x-ui (версия 3.6.0+)...${plain}" >&3
+bash <(curl -Ls https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh) <<EOF >>"$LOG_FILE" 2>&1
+y
+${USERNAME}
+${PASSWORD}
+${PORT}
+${WEBPATH}
+EOF
 
 echo -e "${yellow}Ожидаем запуска панели...${plain}" >&3
 for i in {1..15}; do
@@ -225,6 +151,12 @@ if [[ "$INSTALL_WARP" == true ]]; then
     echo -e "1\n40000\n" | bash /tmp/warp_menu.sh c >/dev/null 2>&1 || true
     rm -f /tmp/warp_menu.sh
 fi
+
+ARCH=$(uname -m)
+case "$ARCH" in
+    x86_64) ARCH="amd64" ;;
+    aarch64) ARCH="arm64" ;;
+esac
 
 KEYS=$(/usr/local/x-ui/bin/xray-linux-${ARCH} x25519)
 PRIVATE_KEY=$(echo "$KEYS" | grep -i "Private" | sed -E 's/.*Key:\s*//')
@@ -244,6 +176,7 @@ fi
 VLESS_TAG="in-${INBOUND_PORT}-tcp"
 HY2_TAG="in-${HY2_PORT}-udp"
 
+# === VLESS JSON ===
 VLESS_SETTINGS_JSON=$(jq -nc \
   --arg uuid "$CLIENT_UUID" \
   --arg email "$CLIENT_EMAIL" \
@@ -294,6 +227,7 @@ curl -s -b "$COOKIE_JAR" -X POST "http://127.0.0.1:${PORT}/${WEBPATH}/panel/api/
     '{enable: true, remark: $tag, listen: "", port: $port, protocol: "vless", tag: $tag,
       settings: ($settings | tostring), streamSettings: ($stream | tostring), sniffing: ($sniffing | tostring)}')" >>"$LOG_FILE" 2>&1
 
+# === Hysteria 2 JSON ===
 HY2_SETTINGS_JSON=$(jq -nc \
   --arg uuid "$CLIENT_UUID" \
   --arg email "$CLIENT_EMAIL" \
@@ -318,7 +252,7 @@ HY2_STREAM_SETTINGS_JSON=$(jq -nc \
   network: "udp",
   security: "tls",
   tlsSettings: {
-    certificates: [{certFile: $cert, keyFile: $key}],
+    certificates: [{certificateFile: $cert, keyFile: $key}],
     serverName: $sni,
     alpn: ["h3"]
   },
@@ -339,6 +273,8 @@ curl -s -b "$COOKIE_JAR" -X POST "http://127.0.0.1:${PORT}/${WEBPATH}/panel/api/
     '{enable: true, remark: $tag, listen: "", port: $port, protocol: "hysteria", tag: $tag,
       settings: ($settings | tostring), streamSettings: ($stream | tostring), sniffing: ($sniffing | tostring)}')" >>"$LOG_FILE" 2>&1
 
+
+# === WARP Routing ===
 if [[ "$INSTALL_WARP" == true ]]; then
     XRAY_CONFIG=$(jq -nc --arg vlesstag "$VLESS_TAG" '{
       log: {access: "none", dnsLog: false, error: "", loglevel: "warning", maskAddress: ""},
