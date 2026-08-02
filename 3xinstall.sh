@@ -189,7 +189,6 @@ wget -q -O "$FILE_SH" "$URL_SH" || true
 chmod +x /usr/local/x-ui/x-ui.sh /usr/bin/x-ui 2>/dev/null || true
 
 cd /usr/local/x-ui/ || exit 1
-# Прямая запись пути без слэшей, панель 3x-ui сама добавит их при запуске
 ./x-ui setting -username "$USERNAME" -password "$PASSWORD" -port "$PORT" -webBasePath "${WEBPATH}" >>"$LOG_FILE" 2>&1
 ./x-ui migrate >>"$LOG_FILE" 2>&1
 
@@ -202,7 +201,6 @@ PANEL_READY=false
 
 for i in {1..20}; do
     sleep 2
-    # Проверяем код ответа сервера, разрешая редиректы (-L)
     HTTP_CODE=$(curl -s -L -o /dev/null -w "%{http_code}" -m 2 "http://127.0.0.1:${PORT}/${WEBPATH}/")
     if [[ "$HTTP_CODE" == "200" || "$HTTP_CODE" == "302" || "$HTTP_CODE" == "401" ]]; then
         echo -e "${green}Панель готова.${plain}" >&3
@@ -213,8 +211,6 @@ done
 
 if [[ "$PANEL_READY" == false ]]; then
     echo -e "${red}Критическая ошибка: панель 3x-ui не ответила на порту ${PORT}!${plain}" >&3
-    echo -e "${yellow}Последние логи из systemd:${plain}" >&3
-    journalctl -u x-ui --no-pager -n 15 >&3
     exit 1
 fi
 
@@ -235,9 +231,11 @@ SHORT_ID=$(head -c 8 /dev/urandom | xxd -p)
 COOKIE_JAR=$(mktemp)
 API_BASE_URL="http://127.0.0.1:${PORT}/${WEBPATH}"
 
+# === ИСПРАВЛЕННЫЙ БЛОК АВТОРИЗАЦИИ ===
+# Отправляем данные как стандартную форму (--data-urlencode), а не как JSON!
 LOGIN_RESPONSE=$(curl -s -c "$COOKIE_JAR" -X POST "${API_BASE_URL}/login" \
-  -H "Content-Type: application/json" \
-  -d "{\"username\": \"${USERNAME}\", \"password\": \"${PASSWORD}\"}")
+  --data-urlencode "username=${USERNAME}" \
+  --data-urlencode "password=${PASSWORD}")
 
 if ! echo "$LOGIN_RESPONSE" | grep -q '"success":true'; then
     echo -e "${red}Ошибка авторизации в 3x-ui API. Учетные данные не подошли.${plain}" >&3
