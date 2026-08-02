@@ -190,39 +190,47 @@ chmod +x /usr/local/x-ui/x-ui.sh /usr/bin/x-ui 2>/dev/null || true
 
 cd /usr/local/x-ui/ || exit 1
 ./x-ui migrate >>"$LOG_FILE" 2>&1
-./x-ui setting -username "$USERNAME" -password "$PASSWORD" -port "$PORT" -webBasePath "/${WEBPATH}/" >>"$LOG_FILE" 2>&1
 
 echo -e "${yellow}Запуск панели 3x-ui...${plain}" >&3
 systemctl daemon-reload >>"$LOG_FILE" 2>&1
 systemctl enable x-ui >>"$LOG_FILE" 2>&1
 systemctl start x-ui >>"$LOG_FILE" 2>&1
 
-echo -e "${yellow}Ожидаем запуска и проверяем авторизацию API...${plain}" >&3
+echo -e "${yellow}Ожидаем запуска и авторизуемся по умолчанию (admin:admin)...${plain}" >&3
 PANEL_READY=false
-API_BASE_URL="http://127.0.0.1:${PORT}/${WEBPATH}"
+API_BASE_URL="http://127.0.0.1:${PORT}"
 COOKIE_JAR=$(mktemp)
 
 for i in {1..30}; do
     sleep 2
     LOGIN_RESPONSE=$(curl -s -L -c "$COOKIE_JAR" -X POST "${API_BASE_URL}/login" \
       -H "Content-Type: application/json" \
-      -d "{\"username\": \"${USERNAME}\", \"password\": \"${PASSWORD}\"}")
+      -d '{"username": "admin", "password": "admin"}')
     
     if echo "$LOGIN_RESPONSE" | grep -q '"success":true'; then
-        echo -e "${green}Панель готова, успешная авторизация!${plain}" >&3
+        echo -e "${green}Успешный вход, меняем учетные данные на уникальные...${plain}" >&3
+        
+        # Меняем настройки через API панели
+        curl -s -b "$COOKIE_JAR" -X POST "${API_BASE_URL}/panel/api/setting/update" \
+          -H "Content-Type: application/json" \
+          -d "{\"username\": \"${USERNAME}\", \"password\": \"${PASSWORD}\", \"port\": ${PORT}, \"webBasePath\": \"/${WEBPATH}/\"}" >>"$LOG_FILE" 2>&1
+        
         PANEL_READY=true
         break
     fi
 done
 
 if [[ "$PANEL_READY" == false ]]; then
-    echo -e "${red}Критическая ошибка: не удалось авторизоваться в панели после запуска!${plain}" >&3
-    echo -e "URL: ${API_BASE_URL}/login" >&3
-    echo -e "User: ${USERNAME} | Pass: ${PASSWORD}" >&3
-    echo -e "Ответ сервера API: ${LOGIN_RESPONSE}" >&3
+    echo -e "${red}Критическая ошибка: не удалось запустить панель!${plain}" >&3
     rm -f "$COOKIE_JAR"
     exit 1
 fi
+
+# Переавторизуемся с уже новыми данными для дальнейшей настройки
+API_BASE_URL="http://127.0.0.1:${PORT}/${WEBPATH}"
+curl -s -c "$COOKIE_JAR" -X POST "${API_BASE_URL}/login" \
+  -H "Content-Type: application/json" \
+  -d "{\"username\": \"${USERNAME}\", \"password\": \"${PASSWORD}\"}" >/dev/null 2>&1
 
 if [[ "$INSTALL_WARP" == true ]]; then
     echo -e "${yellow}Установка Cloudflare WARP...${plain}" >&3
