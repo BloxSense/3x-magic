@@ -141,7 +141,7 @@ arch() {
 }
 ARCH=$(arch)
 
-echo -e "${yellow}Скачивание и установка 3x-ui строго версии v3.6.0...${plain}" >&3
+echo -e "${yellow}Скачивание и установка 3x-ui версии v3.6.0...${plain}" >&3
 cd /usr/local/ || exit 1
 VERSION="v3.6.0"
 URL1="https://github.com/MHSanaei/3x-ui/releases/download/${VERSION}/x-ui-linux-${ARCH}.tar.gz"
@@ -162,7 +162,8 @@ chmod +x x-ui
 [[ "$ARCH" == armv* ]] && mv bin/xray-linux-${ARCH} bin/xray-linux-arm && chmod +x bin/xray-linux-arm
 chmod +x x-ui bin/xray-linux-${ARCH}
 
-# Создаем файл сервиса вручную
+mkdir -p /etc/x-ui/
+
 cat > /etc/systemd/system/x-ui.service <<EOF
 [Unit]
 Description=3x-ui Service
@@ -320,7 +321,6 @@ curl -s -b "$COOKIE_JAR" -X POST "http://127.0.0.1:${PORT}/${WEBPATH}/panel/api/
     --argjson port "$HY2_PORT" \
     '{enable: true, remark: $tag, listen: "", port: $port, protocol: "hysteria", tag: $tag,
       settings: ($settings | tostring), streamSettings: ($stream | tostring), sniffing: ($sniffing | tostring)}')" >>"$LOG_FILE" 2>&1
-
 
 if [[ "$INSTALL_WARP" == true ]]; then
     XRAY_CONFIG=$(jq -nc --arg vlesstag "$VLESS_TAG" '{
