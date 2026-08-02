@@ -189,8 +189,8 @@ wget -q -O "$FILE_SH" "$URL_SH" || true
 chmod +x /usr/local/x-ui/x-ui.sh /usr/bin/x-ui 2>/dev/null || true
 
 cd /usr/local/x-ui/ || exit 1
+./x-ui setting -username "$USERNAME" -password "$PASSWORD" -port "$PORT" -webBasePath "${WEBPATH}" >>"$LOG_FILE" 2>&1
 ./x-ui migrate >>"$LOG_FILE" 2>&1
-./x-ui setting -username "$USERNAME" -password "$PASSWORD" -port "$PORT" -webBasePath "/${WEBPATH}/" >>"$LOG_FILE" 2>&1
 
 systemctl daemon-reload >>"$LOG_FILE" 2>&1
 systemctl enable x-ui >>"$LOG_FILE" 2>&1
@@ -201,13 +201,12 @@ PANEL_READY=false
 API_BASE_URL="http://127.0.0.1:${PORT}/${WEBPATH}"
 COOKIE_JAR=$(mktemp)
 
-# Пуленепробиваемый цикл: ждем до 40 секунд, пока API не примет наши учетные данные
-for i in {1..20}; do
+# Ждём до 60 секунд. Отправляем данные правильно (через --data-urlencode).
+for i in {1..30}; do
     sleep 2
-    LOGIN_RESPONSE=$(curl -s -c "$COOKIE_JAR" -X POST "${API_BASE_URL}/login" \
-      -H "Accept: application/json" \
-      -H "Content-Type: application/json" \
-      -d "{\"username\": \"${USERNAME}\", \"password\": \"${PASSWORD}\"}")
+    LOGIN_RESPONSE=$(curl -s -L -c "$COOKIE_JAR" -X POST "${API_BASE_URL}/login" \
+      --data-urlencode "username=${USERNAME}" \
+      --data-urlencode "password=${PASSWORD}")
     
     if echo "$LOGIN_RESPONSE" | grep -q '"success":true'; then
         echo -e "${green}Панель готова, успешная авторизация!${plain}" >&3
