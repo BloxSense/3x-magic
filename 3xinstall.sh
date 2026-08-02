@@ -189,28 +189,39 @@ wget -q -O "$FILE_SH" "$URL_SH" || true
 chmod +x /usr/local/x-ui/x-ui.sh /usr/bin/x-ui 2>/dev/null || true
 
 cd /usr/local/x-ui/ || exit 1
-./x-ui setting -username "$USERNAME" -password "$PASSWORD" -port "$PORT" -webBasePath "${WEBPATH}" >>"$LOG_FILE" 2>&1
 ./x-ui migrate >>"$LOG_FILE" 2>&1
+./x-ui setting -username "$USERNAME" -password "$PASSWORD" -port "$PORT" -webBasePath "/${WEBPATH}/" >>"$LOG_FILE" 2>&1
 
 systemctl daemon-reload >>"$LOG_FILE" 2>&1
 systemctl enable x-ui >>"$LOG_FILE" 2>&1
 systemctl start x-ui >>"$LOG_FILE" 2>&1
 
-echo -e "${yellow}Ожидаем запуска панели...${plain}" >&3
+echo -e "${yellow}Ожидаем запуска панели и проверяем авторизацию API...${plain}" >&3
 PANEL_READY=false
+API_BASE_URL="http://127.0.0.1:${PORT}/${WEBPATH}"
+COOKIE_JAR=$(mktemp)
 
+# Пуленепробиваемый цикл: ждем до 40 секунд, пока API не примет наши учетные данные
 for i in {1..20}; do
     sleep 2
-    HTTP_CODE=$(curl -s -L -o /dev/null -w "%{http_code}" -m 2 "http://127.0.0.1:${PORT}/${WEBPATH}/")
-    if [[ "$HTTP_CODE" == "200" || "$HTTP_CODE" == "302" || "$HTTP_CODE" == "401" ]]; then
-        echo -e "${green}Панель готова.${plain}" >&3
+    LOGIN_RESPONSE=$(curl -s -c "$COOKIE_JAR" -X POST "${API_BASE_URL}/login" \
+      -H "Accept: application/json" \
+      -H "Content-Type: application/json" \
+      -d "{\"username\": \"${USERNAME}\", \"password\": \"${PASSWORD}\"}")
+    
+    if echo "$LOGIN_RESPONSE" | grep -q '"success":true'; then
+        echo -e "${green}Панель готова, успешная авторизация!${plain}" >&3
         PANEL_READY=true
         break
     fi
 done
 
 if [[ "$PANEL_READY" == false ]]; then
-    echo -e "${red}Критическая ошибка: панель 3x-ui не ответила на порту ${PORT}!${plain}" >&3
+    echo -e "${red}Критическая ошибка: не удалось авторизоваться в панели после запуска!${plain}" >&3
+    echo -e "Ответ сервера API: ${LOGIN_RESPONSE}" >&3
+    echo -e "${yellow}Последние логи из systemd:${plain}" >&3
+    journalctl -u x-ui --no-pager -n 15 >&3
+    rm -f "$COOKIE_JAR"
     exit 1
 fi
 
@@ -227,20 +238,6 @@ KEYS=$("$XRAY_BIN" x25519)
 PRIVATE_KEY=$(echo "$KEYS" | grep -i "Private" | sed -E 's/.*Key:\s*//')
 PUBLIC_KEY=$(echo "$KEYS" | grep -i "Password" | sed -E 's/.*Password:\s*//')
 SHORT_ID=$(head -c 8 /dev/urandom | xxd -p)
-
-COOKIE_JAR=$(mktemp)
-API_BASE_URL="http://127.0.0.1:${PORT}/${WEBPATH}"
-
-# === ИСПРАВЛЕННЫЙ БЛОК АВТОРИЗАЦИИ ===
-# Отправляем данные как стандартную форму (--data-urlencode), а не как JSON!
-LOGIN_RESPONSE=$(curl -s -c "$COOKIE_JAR" -X POST "${API_BASE_URL}/login" \
-  --data-urlencode "username=${USERNAME}" \
-  --data-urlencode "password=${PASSWORD}")
-
-if ! echo "$LOGIN_RESPONSE" | grep -q '"success":true'; then
-    echo -e "${red}Ошибка авторизации в 3x-ui API. Учетные данные не подошли.${plain}" >&3
-    exit 1
-fi
 
 VLESS_TAG="in-${INBOUND_PORT}-tcp"
 HY2_TAG="in-${HY2_PORT}-udp"
