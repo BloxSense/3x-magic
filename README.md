@@ -1,6 +1,4 @@
-Вот готовый текст для файла **`README.md`**. Скопируй блок ниже полностью и вставь в редактор файла на GitHub:
 
-```markdown
 # ⚡ 3X-UI Quick Deploy (VLESS Reality + Hysteria 2)
 
 Personal automated scripts for fast **VLESS Reality** & **Hysteria 2** setup via **3X-UI** with optional **Cloudflare WARP** integration.
