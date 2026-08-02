@@ -15,7 +15,7 @@ Run the desired command directly on your clean Linux VPS (Ubuntu / Debian / Cent
 > Installs 3X-UI with auto-configured VLESS Reality (`ozon.ru`) and Hysteria 2.
 
 ```bash
-bash <(curl -Ls [https://raw.githubusercontent.com/poltargaste/vlessk/main/3xinstall.sh](https://raw.githubusercontent.com/poltargaste/vlessk/main/3xinstall.sh))
+bash <(curl -Ls [https://raw.githubusercontent.com/poltargaste/vlessk/main/3xinstall.sh])
 
 ```
 
@@ -26,7 +26,7 @@ bash <(curl -Ls [https://raw.githubusercontent.com/poltargaste/vlessk/main/3xins
 > Routes VLESS Reality inbound traffic through **Cloudflare WARP** for ChatGPT/geo-lock bypass while keeping Hysteria 2 direct.
 
 ```bash
-bash <(curl -Ls [https://raw.githubusercontent.com/poltargaste/vlessk/main/3xinstall.sh](https://raw.githubusercontent.com/poltargaste/vlessk/main/3xinstall.sh)) --warp
+bash <(curl -Ls [https://raw.githubusercontent.com/poltargaste/vlessk/main/3xinstall.sh]) --warp
 
 ```
 
@@ -37,7 +37,7 @@ bash <(curl -Ls [https://raw.githubusercontent.com/poltargaste/vlessk/main/3xins
 > Allows setting a **custom panel port** and configuring additional options.
 
 ```bash
-bash <(curl -Ls [https://raw.githubusercontent.com/poltargaste/vlessk/main/3xinstall.sh](https://raw.githubusercontent.com/poltargaste/vlessk/main/3xinstall.sh)) --extend --warp
+bash <(curl -Ls [https://raw.githubusercontent.com/poltargaste/vlessk/main/3xinstall.sh]) --extend --warp
 
 ```
 
