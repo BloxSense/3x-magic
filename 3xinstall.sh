@@ -173,6 +173,7 @@ Wants=network.target
 [Service]
 Type=simple
 User=root
+WorkingDirectory=/usr/local/x-ui/
 ExecStart=/usr/local/x-ui/x-ui
 Restart=on-failure
 RestartSec=5s
@@ -186,20 +187,29 @@ FILE_SH="/usr/bin/x-ui"
 wget -q -O "$FILE_SH" "$URL_SH" || true
 chmod +x /usr/local/x-ui/x-ui.sh /usr/bin/x-ui 2>/dev/null || true
 
-/usr/local/x-ui/x-ui setting -username "$USERNAME" -password "$PASSWORD" -port "$PORT" -webBasePath "$WEBPATH" >>"$LOG_FILE" 2>&1
-/usr/local/x-ui/x-ui migrate >>"$LOG_FILE" 2>&1
+cd /usr/local/x-ui/ || exit 1
+./x-ui setting -username "$USERNAME" -password "$PASSWORD" -port "$PORT" -webBasePath "$WEBPATH" >>"$LOG_FILE" 2>&1
+./x-ui migrate >>"$LOG_FILE" 2>&1
+
 systemctl daemon-reload >>"$LOG_FILE" 2>&1
 systemctl enable x-ui >>"$LOG_FILE" 2>&1
 systemctl start x-ui >>"$LOG_FILE" 2>&1
 
 echo -e "${yellow}Ожидаем запуска панели...${plain}" >&3
+PANEL_READY=false
 for i in {1..15}; do
     sleep 2
     if curl -s --max-time 2 "http://127.0.0.1:${PORT}/${WEBPATH}/login" | grep -q "html" 2>/dev/null; then
         echo -e "${green}Панель готова.${plain}" >&3
+        PANEL_READY=true
         break
     fi
 done
+
+if [[ "$PANEL_READY" == false ]]; then
+    echo -e "${red}Критическая ошибка: панель 3x-ui не запустилась. Проверь логи: journalctl -u x-ui -e${plain}" >&3
+    exit 1
+fi
 
 if [[ "$INSTALL_WARP" == true ]]; then
     echo -e "${yellow}Установка Cloudflare WARP...${plain}" >&3
