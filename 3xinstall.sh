@@ -35,7 +35,10 @@ if [[ $EUID -ne 0 ]]; then
 fi
 
 LOG_FILE="/var/log/3x-ui_install_log.txt"
-exec > >(tee -a "$LOG_FILE") 2>&1
+exec 3>&1
+exec > >(tee -a "$LOG_FILE") 2> >(tee -a "$LOG_FILE" >&2)
+
+echo -e "\033[1;34m[1/6] Удаление старых версий и подготовка системы...\033[0m" >&3
 
 if command -v x-ui &> /dev/null; then
     systemctl stop x-ui 2>/dev/null || true
@@ -50,6 +53,7 @@ if [[ -f /etc/os-release ]]; then
     source /etc/os-release
     release=$ID
 else
+    echo "Не удалось определить ОС" >&3
     exit 1
 fi
 
@@ -67,23 +71,25 @@ arch() {
 }
 ARCH=$(arch)
 
+echo -e "\033[1;34m[2/6] Установка необходимых пакетов (curl, jq, sqlite3, qrencode)... \033[0m" >&3
+
 case "${release}" in
     ubuntu | debian | armbian)
         apt-get update -y > /dev/null 2>&1
-        apt-get install -y -q wget curl tar jq xxd qrencode uuid-runtime openssl ca-certificates > /dev/null 2>&1
+        apt-get install -y -q wget curl tar jq xxd qrencode uuid-runtime openssl ca-certificates sqlite3 > /dev/null 2>&1
         ;;
     centos | rhel | almalinux | rocky | ol | fedora | amzn | virtuozzo)
         (dnf -y update || yum -y update) > /dev/null 2>&1
-        (dnf install -y -q wget curl tar jq xxd qrencode util-linux openssl || \
-         yum install -y -q wget curl tar jq xxd qrencode util-linux openssl) > /dev/null 2>&1
+        (dnf install -y -q wget curl tar jq xxd qrencode util-linux openssl sqlite || \
+         yum install -y -q wget curl tar jq xxd qrencode util-linux openssl sqlite) > /dev/null 2>&1
         ;;
     arch | manjaro | parch)
         pacman -Syu --noconfirm > /dev/null 2>&1
-        pacman -S --noconfirm wget curl tar jq xxd qrencode util-linux openssl > /dev/null 2>&1
+        pacman -S --noconfirm wget curl tar jq xxd qrencode util-linux openssl sqlite > /dev/null 2>&1
         ;;
     *)
         apt-get update -y > /dev/null 2>&1
-        apt-get install -y wget curl tar jq xxd qrencode uuid-runtime openssl > /dev/null 2>&1
+        apt-get install -y wget curl tar jq xxd qrencode uuid-runtime openssl sqlite3 > /dev/null 2>&1
         ;;
 esac
 
@@ -114,11 +120,12 @@ else
     PANEL_PORT=$(( (RANDOM % 20000) + 20000 ))
 fi
 
+echo -e "\033[1;34m[3/6] Загрузка панели 3x-ui ${XUI_VERSION}...\033[0m" >&3
 export XUI_NONINTERACTIVE=1
 bash <(curl -Ls https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh) "${XUI_VERSION}" >/dev/null 2>&1
 
 if ! command -v x-ui &>/dev/null; then
-    echo "Ошибка установки 3x-ui"
+    echo "Ошибка: Установка 3x-ui не удалась." >&3
     exit 1
 fi
 
@@ -134,6 +141,7 @@ if [[ ! -s "${CERT_DIR}/fullchain.pem" || ! -s "${CERT_DIR}/privkey.pem" ]]; the
 fi
 chmod 600 "${CERT_DIR}/privkey.pem"
 
+echo -e "\033[1;34m[4/6] Генерация ключей и сертификатов...\033[0m" >&3
 X25519_OUT=$("$XRAY_BIN" x25519 2>&1)
 REALITY_PRIVATE_KEY=$(echo "$X25519_OUT" | awk -F': ' '/[Pp]rivate/{print $NF; exit}')
 REALITY_PUBLIC_KEY=$(echo "$X25519_OUT" | awk -F': ' '/[Pp]assword/{print $NF; exit}')
@@ -153,12 +161,14 @@ HYSTERIA_PASSWORD=$(gen_random_string 16)
 SALAMANDER_PASSWORD=$(gen_random_string 16)
 
 if [[ "$INSTALL_WARP" == true ]]; then
+    echo -e "\033[1;34m[*] Установка Cloudflare WARP...\033[0m" >&3
     if wget -N https://gitlab.com/fscarmen/warp/-/raw/main/menu.sh -O /tmp/warp_menu.sh >/dev/null 2>&1; then
         echo -e "1\n" | bash /tmp/warp_menu.sh c >/dev/null 2>&1
         rm -f /tmp/warp_menu.sh
     fi
 fi
 
+echo -e "\033[1;34m[5/6] Настройка параметров веб-панели...\033[0m" >&3
 "${xui_folder}/x-ui" setting -username "$PANEL_USERNAME" -password "$PANEL_PASSWORD" -port "$PANEL_PORT" -webBasePath "$PANEL_WEBPATH" >/dev/null 2>&1
 "${xui_folder}/x-ui" migrate >/dev/null 2>&1
 
@@ -192,7 +202,8 @@ STREAM_SETTINGS_HY2=$(jq -nc \
 
 SNIFFING=$(jq -nc '{enabled:true, destOverride:["http","tls"], metadataOnly:false, routeOnly:false}')
 
-# Запись инбаундов напрямую в базу SQLite
+echo -e "\033[1;34m[6/6] Создание протоколов VLESS и Hysteria2 в базе данных...\033[0m" >&3
+
 sqlite3 /etc/x-ui/x-ui.db "INSERT INTO inbounds (user_id, up, down, total, remark, enable, expiry_time, listen, port, protocol, settings, stream_settings, tag, sniffing) VALUES (1, 0, 0, 0, 'VLESS-Reality', 1, 0, '', ${REALITY_PORT}, 'vless', '$(echo $VLESS_SETTINGS | sed "s/'/''/g")', '$(echo $STREAM_SETTINGS_REALITY | sed "s/'/''/g")', 'inbound-${REALITY_PORT}', '$(echo $SNIFFING | sed "s/'/''/g")');" 2>/dev/null || true
 
 sqlite3 /etc/x-ui/x-ui.db "INSERT INTO inbounds (user_id, up, down, total, remark, enable, expiry_time, listen, port, protocol, settings, stream_settings, tag, sniffing) VALUES (1, 0, 0, 0, 'Hysteria2', 1, 0, '', ${HYSTERIA_PORT}, 'hysteria2', '$(echo $HYSTERIA_SETTINGS | sed "s/'/''/g")', '$(echo $STREAM_SETTINGS_HY2 | sed "s/'/''/g")', 'inbound-${HYSTERIA_PORT}', '$(echo $SNIFFING | sed "s/'/''/g")');" 2>/dev/null || true
@@ -208,23 +219,22 @@ FIRST_SHORT_ID=$(echo "$SHORT_IDS_JSON" | jq -r '.[0]')
 VLESS_LINK="vless://${CLIENT_UUID}@${SERVER_IP}:${REALITY_PORT}?type=tcp&security=reality&flow=xtls-rprx-vision&sni=${REALITY_DEST_DOMAIN}&fp=chrome&pbk=${REALITY_PUBLIC_KEY}&sid=${FIRST_SHORT_ID}&spx=${SPIDER_X_ENC}#${CLIENT_EMAIL}"
 HY2_LINK="hysteria2://${HYSTERIA_PASSWORD}@${SERVER_IP}:${HYSTERIA_PORT}?sni=${HYSTERIA_SNI}&alpn=h3&insecure=1&obfs=salamander&obfs-password=${SALAMANDER_PASSWORD}#${CLIENT_EMAIL}"
 
-# Чистый консольный вывод по твоему формату
-clear
-echo "=============================="
-echo "VLESS Reality:"
-echo "\`${VLESS_LINK}\`"
-echo ""
-echo "Кьюар:"
-qrencode -t ANSIUTF8 "$VLESS_LINK" 2>/dev/null || true
-echo "=============================="
-echo "Hysteria:"
-echo "\`${HY2_LINK}\`"
-echo ""
-echo "Кьюар:"
-qrencode -t ANSIUTF8 "$HY2_LINK" 2>/dev/null || true
-echo "=============================="
-echo "Панель 3x-ui"
-echo "Ссылка: http://${SERVER_IP}:${PANEL_PORT}/${PANEL_WEBPATH}"
-echo "Логин:  ${PANEL_USERNAME}"
-echo "Пароль: ${PANEL_PASSWORD}"
-echo "=============================="
+# Чистый консольный вывод
+echo -e "\n==============================" >&3
+echo -e "VLESS Reality:" >&3
+echo -e "\`${VLESS_LINK}\`" >&3
+echo -e "" >&3
+echo -e "Кьюар:" >&3
+qrencode -t ANSIUTF8 "$VLESS_LINK" >&3 2>/dev/null || true
+echo -e "==============================" >&3
+echo -e "Hysteria:" >&3
+echo -e "\`${HY2_LINK}\`" >&3
+echo -e "" >&3
+echo -e "Кьюар:" >&3
+qrencode -t ANSIUTF8 "$HY2_LINK" >&3 2>/dev/null || true
+echo -e "==============================" >&3
+echo -e "Панель 3x-ui" >&3
+echo -e "Ссылка: http://${SERVER_IP}:${PANEL_PORT}/${PANEL_WEBPATH}" >&3
+echo -e "Логин:  ${PANEL_USERNAME}" >&3
+echo -e "Пароль: ${PANEL_PASSWORD}" >&3
+echo -e "==============================" >&3
