@@ -34,6 +34,23 @@ if [[ $EUID -ne 0 ]]; then
     exit 1
 fi
 
+# 1. Диалог проверки старой панели
+if command -v x-ui &> /dev/null; then
+    echo -e "\033[0;33mОбнаружена установленная панель 3x-ui.\033[0m"
+    read -rp "Вы хотите переустановить x-ui? [y/N]: " confirm
+    confirm=${confirm,,}
+    if [[ "$confirm" != "y" && "$confirm" != "yes" ]]; then
+        echo "Отмена установки."
+        exit 1
+    fi
+    systemctl stop x-ui 2>/dev/null || true
+    /usr/local/x-ui/x-ui uninstall -y &>/dev/null || true
+    rm -rf /usr/local/x-ui /etc/x-ui /usr/bin/x-ui /etc/systemd/system/x-ui.service
+    systemctl daemon-reexec
+    systemctl daemon-reload
+    rm -f /root/3x-ui.txt
+fi
+
 LOG_FILE="/var/log/3x-ui_install_log.txt"
 exec 3>&1
 exec > >(tee -a "$LOG_FILE") 2> >(tee -a "$LOG_FILE" >&2)
@@ -42,16 +59,7 @@ green='\033[0;32m'
 cyan='\033[0;36m'
 plain='\033[0m'
 
-echo -e "${cyan}[1/5] Очистка старых компонентов...${plain}" >&3
-
-if command -v x-ui &> /dev/null; then
-    systemctl stop x-ui 2>/dev/null || true
-    /usr/local/x-ui/x-ui uninstall -y &>/dev/null || true
-    rm -rf /usr/local/x-ui /etc/x-ui /usr/bin/x-ui /etc/systemd/system/x-ui.service
-    systemctl daemon-reexec
-    systemctl daemon-reload
-    rm -f /root/3x-ui.txt
-fi
+echo -e "${cyan}[1/5] Подготовка системы и установка зависимостей...${plain}" >&3
 
 if [[ -f /etc/os-release ]]; then
     source /etc/os-release
@@ -74,8 +82,6 @@ arch() {
     esac
 }
 ARCH=$(arch)
-
-echo -e "${cyan}[2/5] Установка системных зависимостей...${plain}" >&3
 
 case "${release}" in
     ubuntu | debian | armbian)
@@ -124,7 +130,7 @@ else
     PANEL_PORT=$(( (RANDOM % 20000) + 20000 ))
 fi
 
-echo -e "${cyan}[3/5] Загрузка панели 3x-ui ${XUI_VERSION}...${plain}" >&3
+echo -e "${cyan}[2/5] Установка 3x-ui ${XUI_VERSION}...${plain}" >&3
 export XUI_NONINTERACTIVE=1
 bash <(curl -Ls https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh) "${XUI_VERSION}" >/dev/null 2>&1
 
@@ -145,11 +151,20 @@ if [[ ! -s "${CERT_DIR}/fullchain.pem" || ! -s "${CERT_DIR}/privkey.pem" ]]; the
 fi
 chmod 600 "${CERT_DIR}/privkey.pem"
 
-echo -e "${cyan}[4/5] Генерация ключей и сертов...${plain}" >&3
+echo -e "${cyan}[3/5] Генерация ключей Reality & MLDSA65...${plain}" >&3
 X25519_OUT=$("$XRAY_BIN" x25519 2>&1)
 REALITY_PRIVATE_KEY=$(echo "$X25519_OUT" | awk -F': ' '/[Pp]rivate/{print $NF; exit}')
 REALITY_PUBLIC_KEY=$(echo "$X25519_OUT" | awk -F': ' '/[Pp]assword/{print $NF; exit}')
 [[ -z "$REALITY_PUBLIC_KEY" ]] && REALITY_PUBLIC_KEY=$(echo "$X25519_OUT" | awk -F': ' '/[Pp]ublic/{print $NF; exit}')
+
+# Генерация MLDSA65
+MLDSA_SEED=""
+MLDSA_VERIFY=""
+if "$XRAY_BIN" mldsa65 -h >/dev/null 2>&1; then
+    MLDSA_OUT=$("$XRAY_BIN" mldsa65 2>&1)
+    MLDSA_SEED=$(echo "$MLDSA_OUT" | awk -F': ' '/[Ss]eed/{print $NF; exit}')
+    MLDSA_VERIFY=$(echo "$MLDSA_OUT" | awk -F': ' '/[Vv]erify/{print $NF; exit}')
+fi
 
 SHORT_IDS_JSON="[]"
 for len in 2 4 6 8 10 12 14 16; do
@@ -164,44 +179,34 @@ CLIENT_SUBID=$(gen_random_string 16)
 HYSTERIA_PASSWORD=$(gen_random_string 16)
 SALAMANDER_PASSWORD=$(gen_random_string 16)
 
+WARP_INSTALLED=false
 if [[ "$INSTALL_WARP" == true ]]; then
     echo -e "${cyan}[*] Установка Cloudflare WARP...${plain}" >&3
     if wget -N https://gitlab.com/fscarmen/warp/-/raw/main/menu.sh -O /tmp/warp_menu.sh >/dev/null 2>&1; then
         echo -e "1\n" | bash /tmp/warp_menu.sh c >/dev/null 2>&1
         rm -f /tmp/warp_menu.sh
+        WARP_INSTALLED=true
     fi
 fi
 
-echo -e "${cyan}[5/5] Запись данных и инбаундов с клиентами в SQLite...${plain}" >&3
+echo -e "${cyan}[4/5] Инициализация базы данных и логинов...${plain}" >&3
 "${xui_folder}/x-ui" setting -username "$PANEL_USERNAME" -password "$PANEL_PASSWORD" -port "$PANEL_PORT" -webBasePath "$PANEL_WEBPATH" >/dev/null 2>&1
 "${xui_folder}/x-ui" migrate >/dev/null 2>&1
 
-# 1. Внедряем VLESS клиента внутрь поля settings
+# Исправленные конфиги для VLESS Reality под 3x-ui v3.5.0
 VLESS_SETTINGS=$(jq -nc --arg uuid "$CLIENT_UUID" --arg email "$CLIENT_EMAIL" --arg subid "$CLIENT_SUBID" '{
-    clients: [{
-        id: $uuid,
-        flow: "xtls-rprx-vision",
-        email: $email,
-        limitIp: 0,
-        totalGB: 0,
-        expiryTime: 0,
-        enable: true,
-        tgId: "",
-        subId: $subid,
-        reset: 0
-    }],
-    decryption: "none",
-    fallbacks: []
+    clients: [{ id: $uuid, flow: "xtls-rprx-vision", email: $email, limitIp: 0, totalGB: 0, expiryTime: 0, enable: true, tgId: "", subId: $subid, reset: 0 }],
+    decryption: "none", fallbacks: []
 }')
 
 STREAM_SETTINGS_REALITY=$(jq -nc \
     --arg dest "$REALITY_DEST" --arg sni1 "$REALITY_DEST_DOMAIN" --arg sni2 "www.${REALITY_DEST_DOMAIN}" \
-    --arg prk "$REALITY_PRIVATE_KEY" --argjson sids "$SHORT_IDS_JSON" --arg pbk "$REALITY_PUBLIC_KEY" --arg spx "$SPIDER_X" '{
+    --arg prk "$REALITY_PRIVATE_KEY" --argjson sids "$SHORT_IDS_JSON" --arg pbk "$REALITY_PUBLIC_KEY" \
+    --arg spx "$SPIDER_X" --arg seed "$MLDSA_SEED" --arg verify "$MLDSA_VERIFY" '{
     network: "tcp",
     security: "reality",
     realitySettings: {
         show: false,
-        dest: $dest,
         xver: 0,
         serverNames: [$sni1, $sni2],
         privateKey: $prk,
@@ -209,29 +214,27 @@ STREAM_SETTINGS_REALITY=$(jq -nc \
         maxClientVer: "",
         maxTimeDiff: 0,
         shortIds: $sids,
-        settings: {publicKey: $pbk, fingerprint: "chrome", serverName: "", spiderX: $spx}
+        mldsa65Seed: $seed,
+        settings: {
+            dest: $dest,
+            publicKey: $pbk,
+            fingerprint: "chrome",
+            serverName: "",
+            spiderX: $spx,
+            mldsa65Verify: $verify
+        }
     }
 }')
 
-# 2. Внедряем Hysteria2 клиента внутрь поля settings
+# Исправленный Hysteria2 под базу 3x-ui v3.5.0
 HYSTERIA_SETTINGS=$(jq -nc --arg pass "$HYSTERIA_PASSWORD" --arg email "$CLIENT_EMAIL" --arg subid "$CLIENT_SUBID" '{
-    clients: [{
-        password: $pass,
-        email: $email,
-        limitIp: 0,
-        totalGB: 0,
-        expiryTime: 0,
-        enable: true,
-        tgId: "",
-        subId: $subid,
-        reset: 0
-    }],
+    clients: [{ password: $pass, email: $email, limitIp: 0, totalGB: 0, expiryTime: 0, enable: true, tgId: "", subId: $subid, reset: 0 }],
     ignoreClientBandwidth: false
 }')
 
 STREAM_SETTINGS_HY2=$(jq -nc \
     --arg sni "$HYSTERIA_SNI" --arg cert "${CERT_DIR}/fullchain.pem" --arg key "${CERT_DIR}/privkey.pem" --arg salpass "$SALAMANDER_PASSWORD" '{
-    network: "tcp",
+    network: "udp",
     security: "tls",
     tlsSettings: {
         serverName: $sni,
@@ -242,16 +245,45 @@ STREAM_SETTINGS_HY2=$(jq -nc \
         rejectUnknownSni: false,
         certificates: [{ certificateFile: $cert, keyFile: $key }]
     },
-    sockopt: { udpIdleTimeoutSec: 60 },
-    hy2UdpMasks: [{ type: "salamander", password: $salpass }]
+    hysteriaSettings: {
+        version: 2,
+        udpMasks: [{ type: "salamander", salamander: { password: $salpass } }]
+    }
 }')
 
 SNIFFING=$(jq -nc '{enabled:true, destOverride:["http","tls"], metadataOnly:false, routeOnly:false}')
 
-# Запись в базу SQLite c клиентами
+echo -e "${cyan}[5/5] Запись протоколов в SQLite и настройка Xray WARP...${plain}" >&3
+
+# Вставка VLESS-Reality
 sqlite3 /etc/x-ui/x-ui.db "INSERT INTO inbounds (user_id, up, down, total, remark, enable, expiry_time, listen, port, protocol, settings, stream_settings, tag, sniffing) VALUES (1, 0, 0, 0, 'VLESS-Reality', 1, 0, '', ${REALITY_PORT}, 'vless', '$(echo $VLESS_SETTINGS | sed "s/'/''/g")', '$(echo $STREAM_SETTINGS_REALITY | sed "s/'/''/g")', 'inbound-${REALITY_PORT}', '$(echo $SNIFFING | sed "s/'/''/g")');" 2>/dev/null || true
 
-sqlite3 /etc/x-ui/x-ui.db "INSERT INTO inbounds (user_id, up, down, total, remark, enable, expiry_time, listen, port, protocol, settings, stream_settings, tag, sniffing) VALUES (1, 0, 0, 0, 'Hysteria2', 1, 0, '', ${HYSTERIA_PORT}, 'hysteria2', '$(echo $HYSTERIA_SETTINGS | sed "s/'/''/g")', '$(echo $STREAM_SETTINGS_HY2 | sed "s/'/''/g")', 'inbound-${HYSTERIA_PORT}', '$(echo $SNIFFING | sed "s/'/''/g")');" 2>/dev/null || true
+# Вставка Hysteria2 (протокол в базе 3x-ui называется strictly 'hysteria')
+sqlite3 /etc/x-ui/x-ui.db "INSERT INTO inbounds (user_id, up, down, total, remark, enable, expiry_time, listen, port, protocol, settings, stream_settings, tag, sniffing) VALUES (1, 0, 0, 0, 'Hysteria2', 1, 0, '', ${HYSTERIA_PORT}, 'hysteria', '$(echo $HYSTERIA_SETTINGS | sed "s/'/''/g")', '$(echo $STREAM_SETTINGS_HY2 | sed "s/'/''/g")', 'inbound-${HYSTERIA_PORT}', '$(echo $SNIFFING | sed "s/'/''/g")');" 2>/dev/null || true
+
+# Настройка Xray конфига с маршрутизацией WARP
+if [[ "$WARP_INSTALLED" == true ]]; then
+    XRAY_TEMPLATE=$(jq -nc '{
+        log: { access: "none", dnsLog: false, error: "", loglevel: "warning" },
+        api: { tag: "api", services: ["HandlerService","LoggerService","StatsService"] },
+        inbounds: [{ tag: "api", listen: "127.0.0.1", port: 62789, protocol: "dokodemo-door", settings: { address: "127.0.0.1" } }],
+        outbounds: [
+            { tag: "direct", protocol: "freedom", settings: {} },
+            { tag: "blocked", protocol: "blackhole", settings: {} },
+            { tag: "warp", protocol: "socks", settings: { servers: [{ address: "127.0.0.1", port: 40000 }] } }
+        ],
+        routing: {
+            domainStrategy: "AsIs",
+            rules: [
+                { type: "field", inboundTag: ["api"], outboundTag: "api" },
+                { type: "field", outboundTag: "blocked", ip: ["geoip:private"] },
+                { type: "field", outboundTag: "blocked", protocol: ["bittorrent"] },
+                { type: "field", inboundTag: ["inbound-'${REALITY_PORT}'"], outboundTag: "warp" }
+            ]
+        }
+    }')
+    sqlite3 /etc/x-ui/x-ui.db "UPDATE settings VALUE '$(echo $XRAY_TEMPLATE | sed "s/'/''/g")' WHERE key='xrayTemplateConfig';" 2>/dev/null || true
+fi
 
 systemctl daemon-reload >/dev/null 2>&1
 systemctl enable x-ui >/dev/null 2>&1
@@ -262,10 +294,9 @@ SPIDER_X_ENC=$(jq -rn --arg s "$SPIDER_X" '$s|@uri')
 FIRST_SHORT_ID=$(echo "$SHORT_IDS_JSON" | jq -r '.[0]')
 
 VLESS_LINK="vless://${CLIENT_UUID}@${SERVER_IP}:${REALITY_PORT}?type=tcp&security=reality&flow=xtls-rprx-vision&sni=${REALITY_DEST_DOMAIN}&fp=chrome&pbk=${REALITY_PUBLIC_KEY}&sid=${FIRST_SHORT_ID}&spx=${SPIDER_X_ENC}#${CLIENT_EMAIL}"
-# Добавлен insecure=1 для автоматического доверия не подписанному сертификату
 HY2_LINK="hysteria2://${HYSTERIA_PASSWORD}@${SERVER_IP}:${HYSTERIA_PORT}?sni=${HYSTERIA_SNI}&alpn=h3&insecure=1&obfs=salamander&obfs-password=${SALAMANDER_PASSWORD}#${CLIENT_EMAIL}"
 
-# Итоговый красивый консольный вывод строго по твоему ТЗ
+# Чистый консольный вывод
 echo -e "\n${green}[✓] Установка успешно завершена!${plain}\n" >&3
 echo -e "==============================" >&3
 echo -e "VLESS Reality:" >&3
