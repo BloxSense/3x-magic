@@ -163,10 +163,15 @@ if [[ ! -s "${CERT_DIR}/fullchain.pem" || ! -s "${CERT_DIR}/privkey.pem" ]]; the
 fi
 chmod 600 "${CERT_DIR}/privkey.pem"
 
-X25519_OUT=$("$XRAY_BIN" x25519)
-REALITY_PRIVATE_KEY=$(echo "$X25519_OUT" | grep -i "Private key" | sed -E 's/.*key:\s*//')
-REALITY_PUBLIC_KEY=$(echo "$X25519_OUT" | grep -i "Password" | sed -E 's/.*Password:\s*//')
-[[ -z "$REALITY_PUBLIC_KEY" ]] && REALITY_PUBLIC_KEY=$(echo "$X25519_OUT" | grep -i "Public key" | sed -E 's/.*key:\s*//')
+X25519_OUT=$("$XRAY_BIN" x25519 2>&1)
+REALITY_PRIVATE_KEY=$(echo "$X25519_OUT" | awk -F': ' '/[Pp]rivate/{print $NF; exit}')
+REALITY_PUBLIC_KEY=$(echo "$X25519_OUT" | awk -F': ' '/[Pp]assword/{print $NF; exit}')
+[[ -z "$REALITY_PUBLIC_KEY" ]] && REALITY_PUBLIC_KEY=$(echo "$X25519_OUT" | awk -F': ' '/[Pp]ublic/{print $NF; exit}')
+if [[ -z "$REALITY_PRIVATE_KEY" || -z "$REALITY_PUBLIC_KEY" ]]; then
+    echo -e "${red}Не удалось распарсить вывод xray x25519:${plain}" >&3
+    echo "$X25519_OUT" >&3
+    exit 1
+fi
 
 SHORT_IDS_JSON="[]"
 for len in 2 4 6 8 10 12 14 16; do
@@ -179,9 +184,9 @@ SPIDER_X="/$(gen_random_string 14)"
 MLDSA_SEED=""
 MLDSA_VERIFY=""
 if "$XRAY_BIN" mldsa65 -h >/dev/null 2>&1; then
-    MLDSA_OUT=$("$XRAY_BIN" mldsa65 2>/dev/null)
-    MLDSA_SEED=$(echo "$MLDSA_OUT"  | grep -i "Seed"   | sed -E 's/.*:\s*//')
-    MLDSA_VERIFY=$(echo "$MLDSA_OUT" | grep -i "Verify" | sed -E 's/.*:\s*//')
+    MLDSA_OUT=$("$XRAY_BIN" mldsa65 2>&1)
+    MLDSA_SEED=$(echo "$MLDSA_OUT"  | awk -F': ' '/[Ss]eed/{print $NF; exit}')
+    MLDSA_VERIFY=$(echo "$MLDSA_OUT" | awk -F': ' '/[Vv]erify/{print $NF; exit}')
 fi
 
 VLESS_DECRYPTION="none"
@@ -223,9 +228,21 @@ fi
 COOKIE_JAR=$(mktemp)
 BASE_URL="http://127.0.0.1:${PANEL_PORT}/${PANEL_WEBPATH}"
 
-LOGIN_RESPONSE=$(curl -s -c "$COOKIE_JAR" -X POST "${BASE_URL}/login" \
-    -H "Content-Type: application/json" \
-    -d "{\"username\": \"${PANEL_USERNAME}\", \"password\": \"${PANEL_PASSWORD}\"}")
+for i in $(seq 1 20); do
+    if curl -s -o /dev/null --max-time 2 "${BASE_URL}/login"; then
+        break
+    fi
+    sleep 1
+done
+
+LOGIN_RESPONSE=""
+for i in $(seq 1 5); do
+    LOGIN_RESPONSE=$(curl -s -c "$COOKIE_JAR" -X POST "${BASE_URL}/login" \
+        -H "Content-Type: application/json" \
+        -d "{\"username\": \"${PANEL_USERNAME}\", \"password\": \"${PANEL_PASSWORD}\"}")
+    echo "$LOGIN_RESPONSE" | grep -q '"success":true' && break
+    sleep 2
+done
 
 if ! echo "$LOGIN_RESPONSE" | grep -q '"success":true'; then
     echo -e "${red}Ошибка авторизации в панели через API:${plain}" >&3
