@@ -3,8 +3,6 @@
 
 Personal automated scripts for fast **VLESS Reality** & **Hysteria 2** setup via **3X-UI** with optional **Cloudflare WARP** integration.
 
-> 🛠️ **Forked & Enhanced** from [YukiKras/vless-scripts](https://github.com/YukiKras/vless-scripts)
-
 ---
 
 ## 🚀 Usage & Quick Start
