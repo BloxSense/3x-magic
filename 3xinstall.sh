@@ -29,6 +29,7 @@ if command -v x-ui &> /dev/null; then
         exit 1
     fi
     echo "Удаление x-ui..."
+    systemctl unmask x-ui &>/dev/null || true
     /usr/local/x-ui/x-ui uninstall -y &>/dev/null || true
     rm -rf /usr/local/x-ui /etc/x-ui /usr/bin/x-ui /etc/systemd/system/x-ui.service
     systemctl daemon-reexec
