@@ -78,6 +78,7 @@ USERNAME=$(gen_random_string 10)
 PASSWORD=$(gen_random_string 10)
 WEBPATH_RAW=$(gen_random_string 18)
 WEBPATH="/${WEBPATH_RAW}/"
+CLEAN_PATH="$WEBPATH_RAW"
 INBOUND_REMARK=$(LC_ALL=C tr -dc 'a-z0-9' </dev/urandom | fold -w 10 | head -n 1)
 HY2_PASSWORD=$(gen_random_string 16)
 
