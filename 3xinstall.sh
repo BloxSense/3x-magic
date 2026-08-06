@@ -172,7 +172,7 @@ URL="https://github.com/MHSanaei/3x-ui/releases/download/v3.6.0/${FILE}"
 systemctl stop x-ui 2>/dev/null || true
 rm -rf /usr/local/x-ui/ "$FILE"
 
-if ! wget -q --show-progress -O "$FILE" "$URL"; then
+if ! wget -q -O "$FILE" "$URL"; then
     echo "Ошибка: не удалось скачать 3x-ui с GitHub" >&3
     exit 1
 fi
@@ -185,10 +185,8 @@ fi
 rm -f "$FILE"
 
 cd x-ui || exit 1
-chmod +x x-ui
-[[ "$ARCH" == armv* ]] && mv bin/xray-linux-${ARCH} bin/xray-linux-arm && chmod +x bin/xray-linux-arm
-chmod +x x-ui bin/xray-linux-${ARCH} 2>/dev/null || chmod +x bin/xray-linux-*
-cp -f x-ui.service /etc/systemd/system/
+chmod +x x-ui bin/xray-linux-* 2>/dev/null || true
+cp -f bin/x-ui.service /etc/systemd/system/ 2>/dev/null || cp -f x-ui.service /etc/systemd/system/ 2>/dev/null || true
 
 FILE="/usr/bin/x-ui"
 URL="https://raw.githubusercontent.com/MHSanaei/3x-ui/main/x-ui.sh"
