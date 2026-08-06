@@ -76,7 +76,8 @@ gen_random_string() {
 
 USERNAME=$(gen_random_string 10)
 PASSWORD=$(gen_random_string 10)
-WEBPATH=$(gen_random_string 18)
+WEBPATH_RAW=$(gen_random_string 18)
+WEBPATH="/${WEBPATH_RAW}/"
 INBOUND_REMARK=$(LC_ALL=C tr -dc 'a-z0-9' </dev/urandom | fold -w 10 | head -n 1)
 HY2_PASSWORD=$(gen_random_string 16)
 
@@ -237,7 +238,7 @@ systemctl start x-ui >>"$LOG_FILE" 2>&1
 echo -e "${yellow}Ожидаем запуска панели...${plain}" >&3
 for i in {1..15}; do
     sleep 2
-    if curl -s --max-time 2 "http://127.0.0.1:${PORT}/${WEBPATH}/login" | grep -q "html" 2>/dev/null; then
+    if curl -s --max-time 2 "http://127.0.0.1:${PORT}/${CLEAN_PATH}/login" | grep -q "html" 2>/dev/null; then
         echo -e "${green}Панель готова.${plain}" >&3
         break
     fi
@@ -256,7 +257,7 @@ EMAIL=$(tr -dc 'a-z0-9' </dev/urandom | head -c 8)
 
 # === API авторизация ===
 COOKIE_JAR=$(mktemp)
-LOGIN_RESPONSE=$(curl -s -c "$COOKIE_JAR" -X POST "http://127.0.0.1:${PORT}/${WEBPATH}/login" \
+LOGIN_RESPONSE=$(curl -s -c "$COOKIE_JAR" -X POST "http://127.0.0.1:${PORT}/${CLEAN_PATH}/login" \
   -H "Content-Type: application/json" \
   -d "{\"username\": \"${USERNAME}\", \"password\": \"${PASSWORD}\"}")
 
@@ -284,7 +285,7 @@ STREAM_SETTINGS_JSON=$(jq -nc \
 
 SNIFFING_JSON=$(jq -nc '{enabled: true, destOverride: ["http", "tls"]}')
 
-ADD_RESULT=$(curl -s -b "$COOKIE_JAR" -X POST "http://127.0.0.1:${PORT}/${WEBPATH}/panel/api/inbounds/add" \
+ADD_RESULT=$(curl -s -b "$COOKIE_JAR" -X POST "http://127.0.0.1:${PORT}/${CLEAN_PATH}/panel/api/inbounds/add" \
   -H "Content-Type: application/json" \
   -d "$(jq -nc \
     --argjson settings "$SETTINGS_JSON" \
@@ -337,11 +338,11 @@ if [[ "$INSTALL_WARP" == true ]]; then
   "metrics": {"tag": "metrics_out", "listen": "127.0.0.1:11111"}
 }')
             XRAY_CONFIG_ENCODED=$(echo "$XRAY_CONFIG" | jq -sRr @uri)
-            UPDATE_RESPONSE=$(curl -s -b "$COOKIE_JAR" -X POST "http://127.0.0.1:${PORT}/${WEBPATH}/panel/xray/update" \
+            UPDATE_RESPONSE=$(curl -s -b "$COOKIE_JAR" -X POST "http://127.0.0.1:${PORT}/${CLEAN_PATH}/panel/xray/update" \
               -H "Content-Type: application/x-www-form-urlencoded" \
               --data-raw "xraySetting=${XRAY_CONFIG_ENCODED}")
             if echo "$UPDATE_RESPONSE" | grep -q '"success":true'; then
-                curl -s -b "$COOKIE_JAR" -X POST "http://127.0.0.1:${PORT}/${WEBPATH}/server/restartXrayService" >>"$LOG_FILE" 2>&1
+                curl -s -b "$COOKIE_JAR" -X POST "http://127.0.0.1:${PORT}/${CLEAN_PATH}/server/restartXrayService" >>"$LOG_FILE" 2>&1
                 echo -e "${green}WARP подключён к VLESS инбаунду.${plain}" >&3
             else
                 echo -e "${red}Ошибка обновления конфига Xray для WARP.${plain}" >&3
@@ -487,7 +488,7 @@ fi
 echo -e "\033[1;32m══════════════════════════════════════\033[0m" >&3
 echo -e "\033[1;32m  Панель 3X-UI\033[0m" >&3
 echo -e "\033[1;32m══════════════════════════════════════\033[0m" >&3
-echo -e "Адрес:  ${cyan}http://${SERVER_IP}:${PORT}/${WEBPATH}${plain}" >&3
+echo -e "Адрес:  ${cyan}http://${SERVER_IP}:${PORT}/${CLEAN_PATH}${plain}" >&3
 echo -e "Логин:  \033[1;33m${USERNAME}\033[0m" >&3
 echo -e "Пароль: \033[1;33m${PASSWORD}\033[0m" >&3
 echo ""
@@ -513,7 +514,7 @@ fi
 echo "======================================"
 echo "  Панель 3X-UI"
 echo "======================================"
-echo "Адрес:  http://${SERVER_IP}:${PORT}/${WEBPATH}"
+echo "Адрес:  http://${SERVER_IP}:${PORT}/${CLEAN_PATH}"
 echo "Логин:  ${USERNAME}"
 echo "Пароль: ${PASSWORD}"
 } >> /root/3x-ui.txt
