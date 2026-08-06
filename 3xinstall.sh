@@ -252,7 +252,13 @@ done
 KEYS=$(/usr/local/x-ui/bin/xray-linux-${ARCH} x25519)
 PRIVATE_KEY=$(echo "$KEYS" | grep -i "Private" | sed -E 's/.*Key:\s*//')
 PUBLIC_KEY=$(echo "$KEYS" | grep -i "Password" | sed -E 's/.*Password:\s*//')
-SHORT_ID=$(head -c 8 /dev/urandom | xxd -p)
+SHORT_IDS_JSON="[]"
+for len in 2 4 6 8 10 12 14 16; do
+    sid=$(head -c $((len/2)) /dev/urandom | xxd -p)
+    SHORT_IDS_JSON=$(echo "$SHORT_IDS_JSON" | jq --arg s "$sid" '. + [$s]')
+done
+SHORT_ID=$(echo "$SHORT_IDS_JSON" | jq -r '.[0]')
+SPIDER_X="/$(tr -dc 'a-zA-Z0-9' </dev/urandom | head -c 16)"
 UUID=$(cat /proc/sys/kernel/random/uuid)
 EMAIL=$(tr -dc 'a-z0-9' </dev/urandom | head -c 8)
 
@@ -284,14 +290,26 @@ SETTINGS_JSON=$(jq -nc --arg uuid "$UUID" --arg email "$EMAIL" '{
   decryption: "none"
 }')
 
+# СТАЛО:
 STREAM_SETTINGS_JSON=$(jq -nc \
   --arg pbk "$PUBLIC_KEY" --arg prk "$PRIVATE_KEY" \
-  --arg sid "$SHORT_ID" --arg dest "${BEST_DOMAIN}:443" --arg sni "$BEST_DOMAIN" '{
-  network: "tcp", security: "reality",
+  --argjson sids "$SHORT_IDS_JSON" \
+  --arg dest "${BEST_DOMAIN}:443" --arg domain "$BEST_DOMAIN" \
+  --arg spx "$SPIDER_X" '{
+  network: "tcp",
+  tcpSettings: { acceptProxyProtocol: false, header: { type: "none" } },
+  security: "reality",
   realitySettings: {
-    show: false, dest: $dest, xver: 0,
-    serverNames: [$sni], privateKey: $prk,
-    settings: {publicKey: $pbk}, shortIds: [$sid]
+    show: false, xver: 0, target: $dest,
+    serverNames: [("www." + $domain), $domain],
+    privateKey: $prk, minClientVer: "", maxClientVer: "", maxTimediff: 0,
+    shortIds: $sids, mldsa65Seed: "",
+    limitFallbackUpload: { afterBytes: 0, bytesPerSec: 0, burstBytesPerSec: 0 },
+    limitFallbackDownload: { afterBytes: 0, bytesPerSec: 0, burstBytesPerSec: 0 },
+    settings: {
+      publicKey: $pbk, fingerprint: "firefox", serverName: "",
+      spiderX: $spx, mldsa65Verify: ""
+    }
   }
 }')
 
@@ -339,7 +357,8 @@ fi
 
 SALAMANDER_PASSWORD=$(tr -dc 'a-zA-Z0-9' </dev/urandom | head -c 16)
 
-HY2_SETTINGS_JSON=$(jq -nc --arg auth "$HY2_PASSWORD" --arg email "$EMAIL" '{
+HY2_EMAIL=$(tr -dc 'a-z0-9' </dev/urandom | head -c 8)
+HY2_SETTINGS_JSON=$(jq -nc --arg auth "$HY2_PASSWORD" --arg email "$HY2_EMAIL" '{
   clients: [
     { auth: $auth, email: $email, limitIp: 0, totalGB: 0, expiryTime: 0,
       enable: true, tgId: 0, subId: "", comment: "", reset: 0 }
@@ -391,11 +410,15 @@ fi
 
 # === WARP ===
 if [[ "$INSTALL_WARP" == true ]]; then
-    echo -e "${yellow}Установка WARP...${plain}" >&3
-    wget -N https://gitlab.com/fscarmen/warp/-/raw/main/menu.sh -O /tmp/warp_menu.sh >/dev/null 2>&1
-    if [[ $? -eq 0 ]]; then
-        echo -e "1\n" | bash /tmp/warp_menu.sh c >/dev/null 2>&1
+    if command -v warp-cli &>/dev/null && warp-cli status 2>/dev/null | grep -q "Connected"; then
+        echo -e "${green}WARP уже установлен и подключён, пропускаем установку.${plain}" >&3
+        WARP_ALREADY_OK=true
+    else
+        echo -e "${yellow}Установка WARP...${plain}" >&3
+        wget -N https://gitlab.com/fscarmen/warp/-/raw/main/menu.sh -O /tmp/warp_menu.sh >/dev/null 2>&1
         if [[ $? -eq 0 ]]; then
+            echo -e "1\n" | bash /tmp/warp_menu.sh c >/dev/null 2>&1
+            if [[ $? -eq 0 ]]; then
             echo -e "${green}WARP установлен.${plain}" >&3
             XRAY_CONFIG=$(jq -nc --arg inbound_tag "inbound-${INBOUND_PORT}" '{
   "log": {"access": "none", "dnsLog": false, "error": "", "loglevel": "warning", "maskAddress": ""},
@@ -449,7 +472,8 @@ rm -f "$COOKIE_JAR"
 # ============================================================
 SERVER_IP=${SERVER_IP:-$(curl -s --max-time 3 https://api.ipify.org || curl -s --max-time 3 https://4.ident.me)}
 
-VLESS_LINK="vless://${UUID}@${SERVER_IP}:${INBOUND_PORT}?type=tcp&security=reality&encryption=none&flow=xtls-rprx-vision&sni=${BEST_DOMAIN}&fp=chrome&pbk=${PUBLIC_KEY}&sid=${SHORT_ID}&spx=%2F#${INBOUND_REMARK}"
+SPX_ENCODED=$(printf '%s' "$SPIDER_X" | sed 's/\//%2F/g')
+VLESS_LINK="vless://${UUID}@${SERVER_IP}:${INBOUND_PORT}?type=tcp&security=reality&encryption=none&flow=xtls-rprx-vision&sni=${BEST_DOMAIN}&fp=firefox&pbk=${PUBLIC_KEY}&sid=${SHORT_ID}&spx=${SPX_ENCODED}#${INBOUND_REMARK}"
 HY2_LINK="hysteria2://${HY2_PASSWORD}@${SERVER_IP}:${HY2_PORT}?insecure=1&sni=${BEST_DOMAIN}#hy2-${INBOUND_REMARK}"
 
 echo -e "\n\033[1;32m══════════════════════════════════════\033[0m" >&3
