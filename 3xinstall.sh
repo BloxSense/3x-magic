@@ -464,6 +464,7 @@ if [[ "$INSTALL_WARP" == true ]]; then
         echo -e "${red}Не удалось загрузить скрипт WARP.${plain}" >&3
     fi
 fi
+fi
 
 rm -f "$COOKIE_JAR"
 
