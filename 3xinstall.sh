@@ -30,7 +30,6 @@ if command -v x-ui &> /dev/null; then
     fi
     echo "Удаление x-ui..."
     systemctl unmask x-ui &>/dev/null || true
-    /usr/local/x-ui/x-ui uninstall -y &>/dev/null || true
     rm -rf /usr/local/x-ui /etc/x-ui /usr/bin/x-ui /etc/systemd/system/x-ui.service
     systemctl daemon-reexec
     systemctl daemon-reload
@@ -187,6 +186,8 @@ rm -f "$FILE"
 
 cd x-ui || exit 1
 chmod +x x-ui bin/xray-linux-* 2>/dev/null || true
+
+systemctl unmask x-ui &>/dev/null || true
 
 if [[ -f "bin/x-ui.service" ]]; then
     cp -f bin/x-ui.service /etc/systemd/system/
