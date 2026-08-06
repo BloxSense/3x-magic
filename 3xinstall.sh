@@ -82,10 +82,10 @@ CLEAN_PATH="$WEBPATH_RAW"
 INBOUND_REMARK=$(LC_ALL=C tr -dc 'a-z0-9' </dev/urandom | fold -w 10 | head -n 1)
 HY2_PASSWORD=$(gen_random_string 16)
 
-VLESS_PORTS=(8443 4443)
+VLESS_PORTS=(8443)
 INBOUND_PORT=${VLESS_PORTS[$RANDOM % ${#VLESS_PORTS[@]}]}
 
-HY2_PORTS=(4433 8444 2083)
+HY2_PORTS=(8444)
 HY2_PORT=${HY2_PORTS[$RANDOM % ${#HY2_PORTS[@]}]}
 
 BEST_DOMAIN="ozon.ru"
@@ -258,8 +258,19 @@ EMAIL=$(tr -dc 'a-z0-9' </dev/urandom | head -c 8)
 
 # === API авторизация ===
 COOKIE_JAR=$(mktemp)
-LOGIN_RESPONSE=$(curl -s -c "$COOKIE_JAR" -X POST "http://127.0.0.1:${PORT}/${CLEAN_PATH}/login" \
+
+# Получаем CSRF-токен и стартовую сессионную cookie через GET на страницу логина
+LOGIN_PAGE=$(curl -s -c "$COOKIE_JAR" "http://127.0.0.1:${PORT}/${CLEAN_PATH}/")
+CSRF_TOKEN=$(echo "$LOGIN_PAGE" | grep -oP 'name="csrf-token" content="\K[^"]+')
+
+if [[ -z "$CSRF_TOKEN" ]]; then
+    echo -e "${red}Не удалось получить CSRF-токен со страницы логина.${plain}" >&3
+    exit 1
+fi
+
+LOGIN_RESPONSE=$(curl -s -b "$COOKIE_JAR" -c "$COOKIE_JAR" -X POST "http://127.0.0.1:${PORT}/${CLEAN_PATH}/login" \
   -H "Content-Type: application/json" \
+  -H "X-CSRF-Token: ${CSRF_TOKEN}" \
   -d "{\"username\": \"${USERNAME}\", \"password\": \"${PASSWORD}\"}")
 
 if ! echo "$LOGIN_RESPONSE" | grep -q '"success":true'; then
@@ -288,6 +299,7 @@ SNIFFING_JSON=$(jq -nc '{enabled: true, destOverride: ["http", "tls"]}')
 
 ADD_RESULT=$(curl -s -b "$COOKIE_JAR" -X POST "http://127.0.0.1:${PORT}/${CLEAN_PATH}/panel/api/inbounds/add" \
   -H "Content-Type: application/json" \
+  -H "X-CSRF-Token: ${CSRF_TOKEN}" \
   -d "$(jq -nc \
     --argjson settings "$SETTINGS_JSON" \
     --argjson stream "$STREAM_SETTINGS_JSON" \
@@ -340,10 +352,11 @@ if [[ "$INSTALL_WARP" == true ]]; then
 }')
             XRAY_CONFIG_ENCODED=$(echo "$XRAY_CONFIG" | jq -sRr @uri)
             UPDATE_RESPONSE=$(curl -s -b "$COOKIE_JAR" -X POST "http://127.0.0.1:${PORT}/${CLEAN_PATH}/panel/xray/update" \
-              -H "Content-Type: application/x-www-form-urlencoded" \
-              --data-raw "xraySetting=${XRAY_CONFIG_ENCODED}")
+            -H "Content-Type: application/x-www-form-urlencoded" \
+            -H "X-CSRF-Token: ${CSRF_TOKEN}" \
+            --data-raw "xraySetting=${XRAY_CONFIG_ENCODED}")
             if echo "$UPDATE_RESPONSE" | grep -q '"success":true'; then
-                curl -s -b "$COOKIE_JAR" -X POST "http://127.0.0.1:${PORT}/${CLEAN_PATH}/server/restartXrayService" >>"$LOG_FILE" 2>&1
+                curl -s -b "$COOKIE_JAR" -H "X-CSRF-Token: ${CSRF_TOKEN}" -X POST "http://127.0.0.1:${PORT}/${CLEAN_PATH}/server/restartXrayService" >>"$LOG_FILE" 2>&1
                 echo -e "${green}WARP подключён к VLESS инбаунду.${plain}" >&3
             else
                 echo -e "${red}Ошибка обновления конфига Xray для WARP.${plain}" >&3
