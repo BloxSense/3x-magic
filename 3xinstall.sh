@@ -186,7 +186,14 @@ rm -f "$FILE"
 
 cd x-ui || exit 1
 chmod +x x-ui bin/xray-linux-* 2>/dev/null || true
-cp -f bin/x-ui.service /etc/systemd/system/ 2>/dev/null || cp -f x-ui.service /etc/systemd/system/ 2>/dev/null || true
+
+if [[ -f "bin/x-ui.service" ]]; then
+    cp -f bin/x-ui.service /etc/systemd/system/
+elif [[ -f "x-ui.service" ]]; then
+    cp -f x-ui.service /etc/systemd/system/
+else
+    wget -q -O /etc/systemd/system/x-ui.service https://raw.githubusercontent.com/MHSanaei/3x-ui/main/x-ui.service
+fi
 
 FILE="/usr/bin/x-ui"
 URL="https://raw.githubusercontent.com/MHSanaei/3x-ui/main/x-ui.sh"
@@ -213,7 +220,7 @@ CLEAN_PATH=$(echo "$WEBPATH" | sed 's@^/@@;s@/$@@')
 echo -e "${yellow}Ожидаем запуска панели...${plain}" >&3
 for i in {1..15}; do
     sleep 2
-    if curl -s -k --max-time 2 "http://127.0.0.1:${PORT}/${CLEAN_PATH}/login" | grep -qiE "html|3x-ui|x-ui" 2>/dev/null; then
+    if curl -s -k -L --max-time 3 "http://127.0.0.1:${PORT}/${CLEAN_PATH}/" | grep -qiE "html|3x-ui|x-ui|login" 2>/dev/null; then
         echo -e "${green}Панель готова.${plain}" >&3
         break
     fi
@@ -246,6 +253,7 @@ LOGIN_RESPONSE=$(curl -s -c "$COOKIE_JAR" -X POST "http://127.0.0.1:${PORT}/${CL
 
 if ! echo "$LOGIN_RESPONSE" | grep -q '"success":true'; then
     echo -e "${red}Ошибка авторизации через API.${plain}" >&3
+    echo "$LOGIN_RESPONSE" >&3
     exit 1
 fi
 
