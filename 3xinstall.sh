@@ -166,23 +166,28 @@ esac
 
 #3x-ui
 cd /usr/local/ || exit 1
-FILE="x-ui-linux-amd64.tar.gz"
-URL="https://github.com/MHSanaei/3x-ui/releases/download/v3.6.0/x-ui-linux-amd64.tar.gz"
+FILE="x-ui-linux-${ARCH}.tar.gz"
+URL="https://github.com/MHSanaei/3x-ui/releases/download/v3.6.0/${FILE}"
 
-if ! wget -q -O "$FILE" "$URL"; then
-    echo "Ошибка: не удалось скачать 3x-ui с GitHub"
+systemctl stop x-ui 2>/dev/null || true
+rm -rf /usr/local/x-ui/ "$FILE"
+
+if ! wget -q --show-progress -O "$FILE" "$URL"; then
+    echo "Ошибка: не удалось скачать 3x-ui с GitHub" >&3
     exit 1
 fi
 
-systemctl stop x-ui 2>/dev/null
-rm -rf /usr/local/x-ui/
-tar -xzf x-ui-linux-${ARCH}.tar.gz
-rm -f x-ui-linux-${ARCH}.tar.gz
+if ! tar -xzf "$FILE"; then
+    echo "Ошибка: не удалось распаковать архив 3x-ui" >&3
+    rm -f "$FILE"
+    exit 1
+fi
+rm -f "$FILE"
 
 cd x-ui || exit 1
 chmod +x x-ui
 [[ "$ARCH" == armv* ]] && mv bin/xray-linux-${ARCH} bin/xray-linux-arm && chmod +x bin/xray-linux-arm
-chmod +x x-ui bin/xray-linux-${ARCH}
+chmod +x x-ui bin/xray-linux-${ARCH} 2>/dev/null || chmod +x bin/xray-linux-*
 cp -f x-ui.service /etc/systemd/system/
 
 FILE="/usr/bin/x-ui"
