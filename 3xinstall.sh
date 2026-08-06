@@ -317,6 +317,78 @@ else
     echo "$ADD_RESULT" >&3
 fi
 
+# ============================================================
+# === HYSTERIA 2 (как инбаунд внутри x-ui) ===
+# ============================================================
+echo -e "\n${yellow}Добавление Hysteria2 в x-ui...${plain}" >&3
+
+HY2_CERT_DIR="/root/cert/ip"
+mkdir -p "$HY2_CERT_DIR"
+
+SERVER_IP=$(curl -s --max-time 3 https://api.ipify.org || curl -s --max-time 3 https://4.ident.me)
+
+if [[ ! -s "${HY2_CERT_DIR}/fullchain.pem" || ! -s "${HY2_CERT_DIR}/privkey.pem" ]]; then
+    openssl req -x509 -nodes -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 \
+        -keyout "${HY2_CERT_DIR}/privkey.pem" \
+        -out "${HY2_CERT_DIR}/fullchain.pem" \
+        -days 3650 \
+        -subj "/CN=${BEST_DOMAIN}" \
+        -addext "subjectAltName=IP:${SERVER_IP}" \
+        >>"$LOG_FILE" 2>&1
+fi
+
+SALAMANDER_PASSWORD=$(tr -dc 'a-zA-Z0-9' </dev/urandom | head -c 16)
+
+HY2_SETTINGS_JSON=$(jq -nc --arg auth "$HY2_PASSWORD" --arg email "$EMAIL" '{
+  clients: [
+    { auth: $auth, email: $email, limitIp: 0, totalGB: 0, expiryTime: 0,
+      enable: true, tgId: 0, subId: "", comment: "", reset: 0 }
+  ],
+  version: 2
+}')
+
+HY2_STREAM_JSON=$(jq -nc \
+  --arg domain "$BEST_DOMAIN" \
+  --arg cert "${HY2_CERT_DIR}/fullchain.pem" \
+  --arg key "${HY2_CERT_DIR}/privkey.pem" \
+  --arg salpass "$SALAMANDER_PASSWORD" '{
+  network: "hysteria",
+  hysteriaSettings: { version: 2, udpIdleTimeout: 60 },
+  security: "tls",
+  tlsSettings: {
+    serverName: $domain, minVersion: "1.2", maxVersion: "1.3",
+    cipherSuites: "", rejectUnknownSni: false, disableSystemRoot: false,
+    enableSessionResumption: false,
+    certificates: [{ certificateFile: $cert, keyFile: $key, ocspStapling: 0,
+      oneTimeLoading: false, usage: "encipherment", buildChain: false, useFile: true }],
+    alpn: ["h3"], echServerKeys: "",
+    settings: { fingerprint: "firefox", echConfigList: "", pinnedPeerCertSha256: [], verifyPeerCertByName: "" }
+  },
+  finalmask: { udp: [{ type: "salamander", settings: { password: $salpass } }] }
+}')
+
+ADD_HY2_RESULT=$(curl -s -b "$COOKIE_JAR" -X POST "http://127.0.0.1:${PORT}/${CLEAN_PATH}/panel/api/inbounds/add" \
+  -H "Content-Type: application/json" \
+  -H "X-CSRF-Token: ${CSRF_TOKEN}" \
+  -d "$(jq -nc \
+    --argjson settings "$HY2_SETTINGS_JSON" \
+    --argjson stream "$HY2_STREAM_JSON" \
+    --argjson sniffing "$SNIFFING_JSON" \
+    --arg port "$HY2_PORT" \
+    '{enable: true, remark: "Hysteria2", listen: "", port: ($port|tonumber),
+      protocol: "hysteria", tag: ("in-" + $port + "-udp"),
+      settings: ($settings | tostring), streamSettings: ($stream | tostring),
+      sniffing: ($sniffing | tostring)}')")
+
+if echo "$ADD_HY2_RESULT" | grep -q '"success":true'; then
+    echo -e "${green}Hysteria2 инбаунд добавлен в x-ui.${plain}" >&3
+    HY2_OK=true
+else
+    echo -e "${red}Ошибка добавления Hysteria2:${plain}" >&3
+    echo "$ADD_HY2_RESULT" >&3
+    HY2_OK=false
+fi
+
 # === WARP ===
 if [[ "$INSTALL_WARP" == true ]]; then
     echo -e "${yellow}Установка WARP...${plain}" >&3
@@ -352,9 +424,9 @@ if [[ "$INSTALL_WARP" == true ]]; then
 }')
             XRAY_CONFIG_ENCODED=$(echo "$XRAY_CONFIG" | jq -sRr @uri)
             UPDATE_RESPONSE=$(curl -s -b "$COOKIE_JAR" -X POST "http://127.0.0.1:${PORT}/${CLEAN_PATH}/panel/xray/update" \
-            -H "Content-Type: application/x-www-form-urlencoded" \
-            -H "X-CSRF-Token: ${CSRF_TOKEN}" \
-            --data-raw "xraySetting=${XRAY_CONFIG_ENCODED}")
+                -H "Content-Type: application/x-www-form-urlencoded" \
+                -H "X-CSRF-Token: ${CSRF_TOKEN}" \
+                --data-raw "xraySetting=${XRAY_CONFIG_ENCODED}")
             if echo "$UPDATE_RESPONSE" | grep -q '"success":true'; then
                 curl -s -b "$COOKIE_JAR" -H "X-CSRF-Token: ${CSRF_TOKEN}" -X POST "http://127.0.0.1:${PORT}/${CLEAN_PATH}/server/restartXrayService" >>"$LOG_FILE" 2>&1
                 echo -e "${green}WARP подключён к VLESS инбаунду.${plain}" >&3
@@ -371,107 +443,6 @@ if [[ "$INSTALL_WARP" == true ]]; then
 fi
 
 rm -f "$COOKIE_JAR"
-
-# ============================================================
-# === HYSTERIA 2 ===
-# ============================================================
-echo -e "\n${yellow}Установка Hysteria2...${plain}" >&3
-
-HY2_DIR="/usr/local/hysteria"
-HY2_BIN="${HY2_DIR}/hysteria"
-HY2_CERT_DIR="/etc/hysteria/certs"
-HY2_CONF="/etc/hysteria/config.yaml"
-HY2_FAILED=false
-HY2_OK=false
-
-mkdir -p "$HY2_DIR" /etc/hysteria "$HY2_CERT_DIR"
-
-HY2_ARCH="amd64"
-case "$ARCH" in
-    arm64) HY2_ARCH="arm64" ;;
-    armv7) HY2_ARCH="armv7" ;;
-    386)   HY2_ARCH="386" ;;
-esac
-
-HY2_URL="https://github.com/apernet/hysteria/releases/latest/download/hysteria-linux-${HY2_ARCH}"
-
-if ! wget -q -O "$HY2_BIN" "$HY2_URL"; then
-    echo -e "${red}Не удалось скачать Hysteria2. Пропускаем.${plain}" >&3
-    HY2_FAILED=true
-fi
-
-if [[ "$HY2_FAILED" != "true" ]]; then
-    chmod +x "$HY2_BIN"
-
-    SERVER_IP=$(curl -s --max-time 3 https://api.ipify.org || curl -s --max-time 3 https://4.ident.me)
-
-    # Self-signed сертификат
-    openssl req -x509 -nodes -newkey ec -pkeyopt ec_paramgen_curve:P-256 \
-        -keyout "${HY2_CERT_DIR}/private.key" \
-        -out "${HY2_CERT_DIR}/cert.crt" \
-        -days 3650 \
-        -subj "/CN=${SERVER_IP}" \
-        -addext "subjectAltName=IP:${SERVER_IP}" \
-        >>"$LOG_FILE" 2>&1
-
-    # Конфиг
-    cat > "$HY2_CONF" <<EOF
-listen: :${HY2_PORT}
-
-tls:
-  cert: ${HY2_CERT_DIR}/cert.crt
-  key: ${HY2_CERT_DIR}/private.key
-
-auth:
-  type: password
-  password: ${HY2_PASSWORD}
-
-masquerade:
-  type: proxy
-  proxy:
-    url: https://ozon.ru
-    rewriteHost: true
-
-quic:
-  initStreamReceiveWindow: 26843545
-  maxStreamReceiveWindow: 26843545
-  initConnReceiveWindow: 67108864
-  maxConnReceiveWindow: 67108864
-
-bandwidth:
-  up: 1 gbps
-  down: 1 gbps
-EOF
-
-    # Systemd сервис
-    cat > /etc/systemd/system/hysteria.service <<EOF
-[Unit]
-Description=Hysteria2 Server
-After=network.target
-
-[Service]
-Type=simple
-ExecStart=${HY2_BIN} server -c ${HY2_CONF}
-Restart=on-failure
-RestartSec=3
-LimitNOFILE=1000000
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-    systemctl daemon-reload >>"$LOG_FILE" 2>&1
-    systemctl enable hysteria >>"$LOG_FILE" 2>&1
-    systemctl start hysteria >>"$LOG_FILE" 2>&1
-    sleep 2
-
-    if systemctl is-active --quiet hysteria; then
-        echo -e "${green}Hysteria2 запущен на порту ${HY2_PORT}.${plain}" >&3
-        HY2_OK=true
-    else
-        echo -e "${red}Hysteria2 не запустился. Проверь: journalctl -u hysteria${plain}" >&3
-    fi
-fi
 
 # ============================================================
 # === ИТОГОВЫЙ ВЫВОД ===
