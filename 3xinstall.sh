@@ -596,7 +596,7 @@ SERVER_IP=${SERVER_IP:-$(curl -s --max-time 3 https://api.ipify.org || curl -s -
 
 SPX_ENCODED=$(printf '%s' "$SPIDER_X" | sed 's/\//%2F/g')
 VLESS_LINK="vless://${UUID}@${SERVER_IP}:${REALITY_PORT}?type=tcp&security=reality&encryption=${PQ_ENCRYPTION}&flow=xtls-rprx-vision&sni=${BEST_DOMAIN}&fp=firefox&pbk=${PUBLIC_KEY}&sid=${SHORT_ID}&spx=${SPX_ENCODED}#VLESS-Reality"
-HY2_LINK="hysteria2://${HYSTERIA_PASSWORD}@${SERVER_IP}:${HYSTERIA_PORT}?insecure=1&sni=${BEST_DOMAIN}#Hysteria2"
+HY2_LINK="hysteria2://${HYSTERIA_PASSWORD}@${SERVER_IP}:${HYSTERIA_PORT}?insecure=1&alpn=h3&fp=firefox&obfs=salamander&obfs-password=${SALAMANDER_PASSWORD}&security=tls&sni=${BEST_DOMAIN}#Hysteria2-${HY2_EMAIL}"
 
 # === Вывод в консоль ===
 echo -e "\n\033[1;32m══════════════════════════════════════════════════\033[0m" >&3
