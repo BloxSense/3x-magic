@@ -19,18 +19,7 @@ bash <(curl -Ls https://raw.githubusercontent.com/BloxSense/3x-magic/main/3xinst
 
 ---
 
-### 2️⃣ Install with Cloudflare WARP
-
-> Routes VLESS Reality inbound traffic through **Cloudflare WARP** for ChatGPT/geo-lock bypass while keeping Hysteria 2 direct.
-
-```bash
-bash <(curl -Ls https://raw.githubusercontent.com/BloxSense/3x-magic/main/3xinstall.sh) --warp
-
-```
-
----
-
-### 3️⃣ Extended Setup
+### 2️⃣ Extended Setup
 
 > Allows setting a **custom panel port** and configuring additional options.
 
