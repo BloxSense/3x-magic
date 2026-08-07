@@ -10,7 +10,7 @@ Personal automated scripts for fast **VLESS Reality** & **Hysteria 2** setup via
 Run the desired command directly on your clean Linux VPS (Ubuntu / Debian / CentOS):
 
 ### 1️⃣ Basic Install
-> Installs 3X-UI with auto-configured VLESS Reality (`ozon.ru`) and Hysteria 2.
+> Installs 3X-UI with auto-configured VLESS Reality (`ozon.ru`/`games.mail.ru`) and Hysteria 2.
 
 ```bash
 bash <(curl -Ls https://raw.githubusercontent.com/BloxSense/3x-magic/main/3xinstall.sh)
@@ -32,7 +32,7 @@ bash <(curl -Ls https://raw.githubusercontent.com/BloxSense/3x-magic/main/3xinst
 
 ## ✨ Key Features
 
-* 🔒 **VLESS Reality**: Pre-configured with `RAW` transport, `xtls-rprx-vision` flow & `ozon.ru` SNI.
+* 🔒 **VLESS Reality**: Pre-configured with `RAW` transport, `xtls-rprx-vision` flow & `ozon.ru`/`games.mail.ru` SNI.
 * 🚀 **Hysteria 2**: Configured with `Salamander` UDP-obfuscation & local SSL certificates.
 * 🎲 **100% Unique Data**: Automatically generates unique UUIDs, passwords, keys, and panel paths on every run.
 * 📊 **Credential Storage**: Saves all generated access links, passwords, and QR codes to `/root/3x-ui.txt`.
