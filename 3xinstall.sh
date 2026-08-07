@@ -20,16 +20,14 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# === Проверка на уже установленную панель x-ui ===
 if command -v x-ui &> /dev/null; then
     echo "Обнаружена установленная панель x-ui."
     read -p "Вы хотите переустановить x-ui? [y/N]: " confirm
-    confirm=${confirm,,}  # перевод ответа в нижний регистр
+    confirm=${confirm,,}
     if [[ "$confirm" != "y" && "$confirm" != "yes" ]]; then
         echo "Отмена. Скрипт завершает работу."
         exit 1
     fi
-
     echo "Удаление x-ui..."
     systemctl stop x-ui 2>/dev/null || true
     systemctl unmask x-ui &>/dev/null || true
@@ -42,6 +40,7 @@ if command -v x-ui &> /dev/null; then
     rm -f /root/3x-ui.txt
     echo "x-ui успешно удалена. Продолжаем выполнение скрипта..."
 fi
+
 
 exec 3>&1
 LOG_FILE="/var/log/3x-ui_install_log.txt"
@@ -88,7 +87,7 @@ if [[ $EUID -ne 0 ]]; then
     exit 1
 fi
 
-# === Настройка TCP BBR и увеличенных сетевых буферов ===
+
 echo -e "${yellow}Настройка TCP BBR и сетевых буферов...${plain}" >&3
 KERNEL_VERSION=$(uname -r | cut -d. -f1-2 | tr -d '.')
 if [[ "$KERNEL_VERSION" -ge 49 ]]; then
@@ -119,7 +118,6 @@ else
     echo -e "${yellow}Ядро не поддерживает BBR. Пропускаем.${plain}" >&3
 fi
 
-# === Определение операционной системы ===
 if [[ -f /etc/os-release ]]; then
     source /etc/os-release
     release=$ID
@@ -141,6 +139,7 @@ arch() {
     esac
 }
 ARCH=$(arch)
+
 
 case "${release}" in
     ubuntu | debian | armbian)
@@ -169,7 +168,7 @@ case "${release}" in
         ;;
 esac
 
-# === 3x-ui ===
+#3x-ui
 cd /usr/local/ || exit 1
 FILE="x-ui-linux-${ARCH}.tar.gz"
 URL="https://github.com/MHSanaei/3x-ui/releases/download/v3.6.0/${FILE}"
@@ -241,6 +240,7 @@ systemctl daemon-reload >>"$LOG_FILE" 2>&1
 systemctl enable x-ui >>"$LOG_FILE" 2>&1
 systemctl start x-ui >>"$LOG_FILE" 2>&1
 
+
 CLEAN_PATH=$(echo "$WEBPATH" | sed 's@^/@@;s@/$@@')
 
 echo -e "${yellow}Ожидаем запуска панели...${plain}" >&3
@@ -255,7 +255,6 @@ for i in {1..15}; do
     fi
 done
 
-# === Генерация ключей Reality и VLESS Encryption ===
 XRAY_BIN="/usr/local/x-ui/bin/xray-linux-${ARCH}"
 [[ -x "$XRAY_BIN" ]] || XRAY_BIN=$(find /usr/local/x-ui/bin -maxdepth 1 -type f -name 'xray-linux-*' | head -n1)
 
@@ -312,7 +311,6 @@ for len in 2 4 6 8 10 12 14 16; do
 done
 SHORT_ID=$(echo "$SHORT_IDS_JSON" | jq -r '.[0]')
 
-# Настройки клиента VLESS
 SETTINGS_JSON=$(jq -nc \
   --arg uuid "$UUID" \
   --arg email "$EMAIL" \
@@ -529,76 +527,43 @@ else
     echo "$ADD_HY2_RESULT" >&3
 fi
 
-# === Установка и настройка Cloudflare WARP ===
 if [[ "$INSTALL_WARP" == true ]]; then
     echo -e "${yellow}Установка Cloudflare WARP...${plain}" >&3
     if wget -N https://gitlab.com/fscarmen/warp/-/raw/main/menu.sh -O /tmp/warp_menu.sh >/dev/null 2>&1; then
         echo -e "1\n" | bash /tmp/warp_menu.sh c >/dev/null 2>&1
         rm -f /tmp/warp_menu.sh
         echo -e "${green}Cloudflare WARP успешно установлен на сервер.${plain}" >&3
-
+        
         echo -e "${yellow}Настройка маршрутизации WARP в 3x-ui...${plain}" >&3
+        
+        XRAY_CONFIG=$(jq -nc --arg vlesstag "in-${REALITY_PORT}-tcp" '{
+          log: { access: "none", dnsLog: false, error: "", loglevel: "warning" },
+          api: { tag: "api", services: ["HandlerService", "LoggerService", "StatsService"] },
+          inbounds: [
+            { tag: "api", listen: "127.0.0.1", port: 62789, protocol: "dokodemo-door", settings: { address: "127.0.0.1" } }
+          ],
+          outbounds: [
+            { tag: "direct", protocol: "freedom", settings: {} },
+            { tag: "blocked", protocol: "blackhole", settings: {} },
+            { tag: "WARP", protocol: "socks", settings: { servers: [{ address: "127.0.0.1", port: 40000 }] } }
+          ],
+          routing: {
+            domainStrategy: "AsIs",
+            rules: [
+              { type: "field", inboundTag: ["api"], outboundTag: "api" },
+              { type: "field", outboundTag: "blocked", ip: ["geoip:private"] },
+              { type: "field", outboundTag: "blocked", protocol: ["bittorrent"] },
+              { type: "field", inboundTag: [$vlesstag], outboundTag: "WARP" }
+            ]
+          }
+        }')
 
-        OPENAPI_JSON=$(curl -s -b "$COOKIE_JAR" "http://127.0.0.1:${PORT}/${CLEAN_PATH}/panel/api-docs/openapi.json")
-
-        OUTBOUND_ADD_PATH=$(echo "$OPENAPI_JSON" | jq -r '
-          .paths | to_entries[] | select(.key | test("outbound"; "i")) |
-          select(.value.post != null) | .key' | head -n1)
-        ROUTING_ADD_PATH=$(echo "$OPENAPI_JSON" | jq -r '
-          .paths | to_entries[] | select(.key | test("rout"; "i")) |
-          select(.value.post != null) | .key' | head -n1)
-
-        WARP_CONFIGURED=false
-
-        if [[ -n "$OUTBOUND_ADD_PATH" && "$OUTBOUND_ADD_PATH" != "null" ]]; then
-            echo -e "${cyan}Найден эндпоинт outbounds: ${OUTBOUND_ADD_PATH}${plain}" >&3
-
-            OUTBOUND_ADD_RESULT=$(curl -s -b "$COOKIE_JAR" -X POST \
-              "http://127.0.0.1:${PORT}/${CLEAN_PATH}${OUTBOUND_ADD_PATH}" \
-              -H "Content-Type: application/json" \
-              -H "X-CSRF-Token: ${CSRF_TOKEN}" \
-              -d '{"tag":"WARP","protocol":"socks","settings":"{\"servers\":[{\"address\":\"127.0.0.1\",\"port\":40000}]}"}')
-
-            if echo "$OUTBOUND_ADD_RESULT" | grep -q '"success":true'; then
-                echo -e "${green}Outbound WARP добавлен.${plain}" >&3
-
-                if [[ -n "$ROUTING_ADD_PATH" && "$ROUTING_ADD_PATH" != "null" ]]; then
-                    ROUTING_ADD_RESULT=$(curl -s -b "$COOKIE_JAR" -X POST \
-                      "http://127.0.0.1:${PORT}/${CLEAN_PATH}${ROUTING_ADD_PATH}" \
-                      -H "Content-Type: application/json" \
-                      -H "X-CSRF-Token: ${CSRF_TOKEN}" \
-                      -d "$(jq -nc --arg tag "in-${REALITY_PORT}-tcp" '{
-                            enable: true,
-                            inboundTag: [$tag],
-                            outboundTag: "WARP"
-                          }')")
-
-                    if echo "$ROUTING_ADD_RESULT" | grep -q '"success":true'; then
-                        WARP_CONFIGURED=true
-                    else
-                        echo -e "${red}Ошибка добавления правила маршрутизации:${plain}" >&3
-                        echo "$ROUTING_ADD_RESULT" >&3
-                    fi
-                else
-                    echo -e "${red}Не удалось определить эндпоинт для routing.${plain}" >&3
-                fi
-            else
-                echo -e "${red}Ошибка добавления outbound WARP:${plain}" >&3
-                echo "$OUTBOUND_ADD_RESULT" >&3
-            fi
-        else
-            echo -e "${red}Не удалось автоматически определить API-эндпоинт outbounds.${plain}" >&3
-            echo -e "${yellow}Откройте в браузере: панель → Исходящие → добавьте WARP вручную,${plain}" >&3
-            echo -e "${yellow}затем через DevTools (F12 → Network) посмотрите реальный запрос${plain}" >&3
-            echo -e "${yellow}и подставьте точный путь/тело в этот блок скрипта.${plain}" >&3
-        fi
-
-        if [[ "$WARP_CONFIGURED" == true ]]; then
-            curl -s -b "$COOKIE_JAR" -H "X-CSRF-Token: ${CSRF_TOKEN}" -X POST "http://127.0.0.1:${PORT}/${CLEAN_PATH}/server/restartXrayService" >/dev/null 2>&1
-            echo -e "${green}Трафик VLESS Reality успешно перенаправлен через WARP!${plain}" >&3
-        else
-            echo -e "${yellow}Автонастройка WARP не выполнена — потребуется ручная настройка в панели.${plain}" >&3
-        fi
+        sqlite3 /etc/x-ui/x-ui.db "UPDATE configs SET value='$(echo "$XRAY_CONFIG" | sed "s/'/''/g")' WHERE key='xrayTemplateConfig';" 2>/dev/null || true
+        
+        curl -s -b "$COOKIE_JAR" -H "X-CSRF-Token: ${CSRF_TOKEN}" -X POST "http://127.0.0.1:${PORT}/${CLEAN_PATH}/server/restartXrayService" >/dev/null 2>&1
+        systemctl restart x-ui >>"$LOG_FILE" 2>&1
+        
+        echo -e "${green}Трафик VLESS Reality успешно перенаправлен через WARP!${plain}" >&3
     else
         echo -e "${red}Не удалось загрузить скрипт WARP.${plain}" >&3
     fi
