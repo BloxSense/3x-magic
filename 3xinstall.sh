@@ -536,33 +536,29 @@ if [[ "$INSTALL_WARP" == true ]]; then
         echo -e "${green}Cloudflare WARP успешно установлен на сервер.${plain}" >&3
         
         echo -e "${yellow}Настройка маршрутизации WARP в 3x-ui...${plain}" >&3
-        
-        XRAY_CONFIG=$(jq -nc --arg vlesstag "in-${REALITY_PORT}-tcp" '{
-          log: { access: "none", dnsLog: false, error: "", loglevel: "warning" },
-          api: { tag: "api", services: ["HandlerService", "LoggerService", "StatsService"] },
-          inbounds: [
-            { tag: "api", listen: "127.0.0.1", port: 62789, protocol: "dokodemo-door", settings: { address: "127.0.0.1" } }
-          ],
-          outbounds: [
-            { tag: "direct", protocol: "freedom", settings: {} },
-            { tag: "blocked", protocol: "blackhole", settings: {} },
-            { tag: "WARP", protocol: "socks", settings: { servers: [{ address: "127.0.0.1", port: 40000 }] } }
-          ],
-          routing: {
-            domainStrategy: "AsIs",
-            rules: [
-              { type: "field", inboundTag: ["api"], outboundTag: "api" },
-              { type: "field", outboundTag: "blocked", ip: ["geoip:private"] },
-              { type: "field", outboundTag: "blocked", protocol: ["bittorrent"] },
-              { type: "field", inboundTag: [$vlesstag], outboundTag: "WARP" }
-            ]
-          }
-        }')
+        XRAY_CURRENT=$(curl -s -b "$COOKIE_JAR" -H "X-CSRF-Token: ${CSRF_TOKEN}" -X POST "http://127.0.0.1:${PORT}/${CLEAN_PATH}/panel/api/xray/")
+        CURRENT_XRAY_SETTING=$(echo "$XRAY_CURRENT" | jq -r '.obj.xraySetting')
 
-        sqlite3 /etc/x-ui/x-ui.db "UPDATE configs SET value='$(echo "$XRAY_CONFIG" | sed "s/'/''/g")' WHERE key='xrayTemplateConfig';" 2>/dev/null || true
-        
-        curl -s -b "$COOKIE_JAR" -H "X-CSRF-Token: ${CSRF_TOKEN}" -X POST "http://127.0.0.1:${PORT}/${CLEAN_PATH}/server/restartXrayService" >/dev/null 2>&1
-        systemctl restart x-ui >>"$LOG_FILE" 2>&1
+        if [[ -z "$CURRENT_XRAY_SETTING" || "$CURRENT_XRAY_SETTING" == "null" ]]; then
+            echo -e "${red}Не удалось получить текущий xraySetting, пропускаю настройку WARP.${plain}" >&3
+        else
+            NEW_XRAY_SETTING=$(echo "$CURRENT_XRAY_SETTING" | jq --arg vlesstag "in-${REALITY_PORT}-tcp" '
+              .outbounds += [{"tag":"WARP","protocol":"socks","settings":{"servers":[{"address":"127.0.0.1","port":40000}]}}] |
+              .routing.rules += [{"type":"field","inboundTag":[$vlesstag],"outboundTag":"WARP"}]
+            ')
+
+            XRAY_SETTING_ENCODED=$(printf '%s' "$NEW_XRAY_SETTING" | jq -sRr @uri)
+            WARP_UPDATE_RESPONSE=$(curl -s -b "$COOKIE_JAR" -H "X-CSRF-Token: ${CSRF_TOKEN}" -X POST "http://127.0.0.1:${PORT}/${CLEAN_PATH}/panel/api/xray/update" \
+              -H "Content-Type: application/x-www-form-urlencoded" \
+              --data-raw "xraySetting=${XRAY_SETTING_ENCODED}")
+
+            if echo "$WARP_UPDATE_RESPONSE" | grep -q '"success":true'; then
+                curl -s -b "$COOKIE_JAR" -H "X-CSRF-Token: ${CSRF_TOKEN}" -X POST "http://127.0.0.1:${PORT}/${CLEAN_PATH}/server/restartXrayService" >/dev/null 2>&1
+            else
+                echo -e "${red}Ошибка сохранения xraySetting с WARP:${plain}" >&3
+                echo "$WARP_UPDATE_RESPONSE" >&3
+            fi
+        fi
         
         echo -e "${green}Трафик VLESS Reality успешно перенаправлен через WARP!${plain}" >&3
     else
@@ -575,7 +571,7 @@ rm -f "$COOKIE_JAR"
 SERVER_IP=${SERVER_IP:-$(curl -s --max-time 3 https://api.ipify.org || curl -s --max-time 3 https://4.ident.me)}
 
 SPX_ENCODED=$(printf '%s' "$SPIDER_X" | sed 's/\//%2F/g')
-VLESS_LINK="vless://${UUID}@${SERVER_IP}:${REALITY_PORT}?type=tcp&security=reality&encryption=${PQ_ENCRYPTION}&flow=xtls-rprx-vision&sni=${BEST_DOMAIN}&fp=firefox&pbk=${PUBLIC_KEY}&sid=${SHORT_ID}&spx=${SPX_ENCODED}#VLESS-Reality"
+VLESS_LINK="vless://${UUID}@${SERVER_IP}:${REALITY_PORT}?encryption=${PQ_ENCRYPTION}&flow=xtls-rprx-vision&fp=firefox&pbk=${PUBLIC_KEY}&security=reality&sid=${SHORT_ID}&sni=${BEST_DOMAIN}&spx=${SPX_ENCODED}&type=tcp#VLESS-Reality-${EMAIL}"
 HY2_LINK="hysteria2://${HYSTERIA_PASSWORD}@${SERVER_IP}:${HYSTERIA_PORT}?insecure=1&alpn=h3&fp=firefox&obfs=salamander&obfs-password=${SALAMANDER_PASSWORD}&security=tls&sni=${BEST_DOMAIN}#Hysteria2-${HY2_EMAIL}"
 
 echo -e "\n\033[1;32m══════════════════════════════════════════════════\033[0m" >&3
