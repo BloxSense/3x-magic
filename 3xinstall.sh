@@ -20,7 +20,6 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# Проверяем наличие команды x-ui
 if command -v x-ui &> /dev/null; then
     echo "Обнаружена установленная панель x-ui."
     read -p "Вы хотите переустановить x-ui? [y/N]: " confirm
@@ -32,7 +31,6 @@ if command -v x-ui &> /dev/null; then
     echo "Удаление x-ui..."
     systemctl stop x-ui 2>/dev/null || true
     systemctl unmask x-ui &>/dev/null || true
-    /usr/local/x-ui/x-ui uninstall -y &>/dev/null || true
     rm -rf /usr/local/x-ui /etc/x-ui /usr/bin/x-ui /etc/systemd/system/x-ui.service
     systemctl daemon-reexec
     systemctl daemon-reload
@@ -40,7 +38,8 @@ if command -v x-ui &> /dev/null; then
     echo "x-ui успешно удалена. Продолжаем выполнение скрипта..."
 fi
 
-exec 3>&1
+# Вывод всех команд кроме диалога — в лог
+exec 3>&1  # Сохраняем stdout для сообщений пользователю
 LOG_FILE="/var/log/3x-ui_install_log.txt"
 exec > >(tee -a "$LOG_FILE") 2> >(tee -a "$LOG_FILE" >&2)
 
@@ -53,14 +52,6 @@ plain='\033[0m'
 if [[ "$EXTENDED_SETUP" == true ]]; then
     read -rp $'\033[0;33mВведите порт для панели (Enter для 8080): \033[0m' USER_PORT
     PORT=${USER_PORT:-8080}
-    echo -e "\n${yellow}Хотите установить SelfSNI?${plain}"
-    read -rp $'\033[0;36mВведите y для установки или нажмите Enter для пропуска: \033[0m' INSTALL_SELFSNI
-    if [[ "$INSTALL_SELFSNI" == "y" || "$INSTALL_SELFSNI" == "Y" ]]; then
-        echo -e "${green}Устанавливается SelfSNI...${plain}" >&3
-        bash <(curl -Ls https://raw.githubusercontent.com/YukiKras/vless-scripts/refs/heads/main/fakesite.sh)
-    else
-        echo -e "${yellow}SelfSNI пропущен.${plain}" >&3
-    fi
 else
     PORT=8080
     echo -e "${yellow}Порт панели по умолчанию: ${PORT}${plain}" >&3
@@ -76,22 +67,16 @@ gen_random_string() {
 
 USERNAME=$(gen_random_string 10)
 PASSWORD=$(gen_random_string 10)
-WEBPATH_RAW=$(gen_random_string 18)
-WEBPATH="/${WEBPATH_RAW}/"
-CLEAN_PATH="$WEBPATH_RAW"
-INBOUND_REMARK=$(LC_ALL=C tr -dc 'a-z0-9' </dev/urandom | fold -w 10 | head -n 1)
-HY2_PASSWORD=$(gen_random_string 16)
+WEBPATH=$(gen_random_string 18)
 
-VLESS_PORTS=(8443)
-INBOUND_PORT=${VLESS_PORTS[$RANDOM % ${#VLESS_PORTS[@]}]}
+REALITY_PORT=8443
+HYSTERIA_PORT=8444
 
-HY2_PORTS=(8444)
-HY2_PORT=${HY2_PORTS[$RANDOM % ${#HY2_PORTS[@]}]}
+DOMAINS=("ozon.ru" "games.mail.ru")
+BEST_DOMAIN=${DOMAINS[$RANDOM % ${#DOMAINS[@]}]}
 
-BEST_DOMAIN="ozon.ru"
-
-echo -e "${green}VLESS инбаунд: ${INBOUND_REMARK} → порт ${INBOUND_PORT}${plain}" >&3
-echo -e "${green}Hysteria2 порт: ${HY2_PORT}${plain}" >&3
+echo -e "${green}VLESS инбаунд: in-${REALITY_PORT}-tcp → порт ${REALITY_PORT}${plain}" >&3
+echo -e "${green}Hysteria2 порт: ${HYSTERIA_PORT}${plain}" >&3
 echo -e "${green}SNI / DEST: ${BEST_DOMAIN}${plain}" >&3
 
 if [[ $EUID -ne 0 ]]; then
@@ -152,56 +137,70 @@ arch() {
 }
 ARCH=$(arch)
 
-# === Зависимости ===
+
 case "${release}" in
     ubuntu | debian | armbian)
         apt-get update > /dev/null 2>&1
-        apt-get install -y -q wget curl tar tzdata jq xxd qrencode openssl > /dev/null 2>&1 ;;
+        apt-get install -y -q wget curl tar tzdata jq xxd qrencode sqlite3 > /dev/null 2>&1
+        ;;
     centos | rhel | almalinux | rocky | ol)
         yum -y update > /dev/null 2>&1
-        yum install -y -q wget curl tar tzdata jq xxd qrencode openssl > /dev/null 2>&1 ;;
+        yum install -y -q wget curl tar tzdata jq xxd qrencode sqlite > /dev/null 2>&1
+        ;;
     fedora | amzn | virtuozzo)
         dnf -y update > /dev/null 2>&1
-        dnf install -y -q wget curl tar tzdata jq xxd qrencode openssl > /dev/null 2>&1 ;;
+        dnf install -y -q wget curl tar tzdata jq xxd qrencode sqlite > /dev/null 2>&1
+        ;;
     arch | manjaro | parch)
         pacman -Syu --noconfirm > /dev/null 2>&1
-        pacman -S --noconfirm wget curl tar tzdata jq xxd qrencode openssl > /dev/null 2>&1 ;;
+        pacman -S --noconfirm wget curl tar tzdata jq xxd qrencode sqlite > /dev/null 2>&1
+        ;;
     opensuse-tumbleweed)
         zypper refresh > /dev/null 2>&1
-        zypper install -y wget curl tar timezone jq xxd qrencode openssl > /dev/null 2>&1 ;;
+        zypper install -y wget curl tar timezone jq xxd qrencode sqlite3 > /dev/null 2>&1
+        ;;
     *)
         apt-get update > /dev/null 2>&1
-        apt-get install -y wget curl tar tzdata jq xxd qrencode openssl > /dev/null 2>&1 ;;
+        apt-get install -y wget curl tar tzdata jq xxd qrencode sqlite3 > /dev/null 2>&1
+        ;;
 esac
 
-# === 3x-ui ===
+#3x-ui
 cd /usr/local/ || exit 1
 FILE="x-ui-linux-${ARCH}.tar.gz"
-URL1="https://github.com/MHSanaei/3x-ui/releases/download/v3.6.0/${FILE}"
+URL="https://github.com/MHSanaei/3x-ui/releases/download/v3.6.0/${FILE}"
 
-if ! wget -q -O "$FILE" "$URL1"; then
-    echo "Не удалось скачать с GitHub, пробую зеркало..."
-fi
+systemctl stop x-ui 2>/dev/null || true
+rm -rf /usr/local/x-ui/ "$FILE"
 
-systemctl stop x-ui 2>/dev/null
-rm -rf /usr/local/x-ui/
-if ! tar -xzf "x-ui-linux-${ARCH}.tar.gz"; then
-    echo -e "${red}Ошибка распаковки архива 3x-ui${plain}" >&3
+if ! wget -q -O "$FILE" "$URL"; then
+    echo "Ошибка: не удалось скачать 3x-ui с GitHub" >&3
     exit 1
 fi
-rm -f "x-ui-linux-${ARCH}.tar.gz"
+
+if ! tar -xzf "$FILE"; then
+    echo "Ошибка: не удалось распаковать архив 3x-ui" >&3
+    rm -f "$FILE"
+    exit 1
+fi
+rm -f "$FILE"
 
 cd x-ui || exit 1
-chmod +x x-ui
-[[ "$ARCH" == armv* ]] && mv bin/xray-linux-${ARCH} bin/xray-linux-arm && chmod +x bin/xray-linux-arm
-chmod +x x-ui bin/xray-linux-${ARCH}
+chmod +x x-ui bin/xray-linux-* 2>/dev/null || true
 
 systemctl unmask x-ui &>/dev/null || true
 
-if [[ -s x-ui.service ]]; then
+if [[ -f "bin/x-ui.service" ]]; then
+    cp -f bin/x-ui.service /etc/systemd/system/
+elif [[ -f "x-ui.service" ]]; then
     cp -f x-ui.service /etc/systemd/system/
 else
-    echo -e "${yellow}x-ui.service отсутствует в архиве, использую встроенный шаблон${plain}" >&3
+    wget -q -O /etc/systemd/system/x-ui.service https://raw.githubusercontent.com/MHSanaei/3x-ui/main/x-ui.service
+fi
+
+# Фикс: если файл не скачался/пустой (masked/does not exist) — используем встроенный шаблон
+if [[ ! -s /etc/systemd/system/x-ui.service ]]; then
+    echo -e "${yellow}x-ui.service не скачался, использую встроенный шаблон${plain}" >&3
     cat > /etc/systemd/system/x-ui.service <<'EOF'
 [Unit]
 Description=x-ui Service
@@ -221,25 +220,32 @@ EOF
 fi
 systemctl unmask x-ui &>/dev/null || true
 
-URL1="https://raw.githubusercontent.com/MHSanaei/3x-ui/main/x-ui.sh"
-URL2="https://files.yukikras.net/3x-ui/x-ui.sh"
 FILE="/usr/bin/x-ui"
-if ! wget -q -O "$FILE" "$URL1"; then
-    wget -q -O "$FILE" "$URL2" || { echo "Ошибка: не удалось скачать x-ui.sh"; exit 1; }
-fi
-chmod +x /usr/local/x-ui/x-ui.sh /usr/bin/x-ui
+URL="https://raw.githubusercontent.com/MHSanaei/3x-ui/main/x-ui.sh"
 
-/usr/local/x-ui/x-ui setting -username "$USERNAME" -password "$PASSWORD" -port "$PORT" -webBasePath "$WEBPATH" >>"$LOG_FILE" 2>&1
+if ! wget -q -O "$FILE" "$URL"; then
+    echo "Ошибка: не удалось скачать x-ui.sh с GitHub"
+    exit 1
+fi
+
+chmod +x /usr/local/x-ui/x-ui.sh /usr/bin/x-ui 2>/dev/null || true
+
+WEBPATH_FORMATTED="/$(echo "$WEBPATH" | sed 's@^/@@;s@/$@@')/"
+
+/usr/local/x-ui/x-ui setting -username "$USERNAME" -password "$PASSWORD" -port "$PORT" -webBasePath "$WEBPATH_FORMATTED" >>"$LOG_FILE" 2>&1
 /usr/local/x-ui/x-ui migrate >>"$LOG_FILE" 2>&1
+
 systemctl daemon-reload >>"$LOG_FILE" 2>&1
 systemctl enable x-ui >>"$LOG_FILE" 2>&1
 systemctl start x-ui >>"$LOG_FILE" 2>&1
 
-# Ждём пока панель поднимется
+
+CLEAN_PATH=$(echo "$WEBPATH" | sed 's@^/@@;s@/$@@')
+
 echo -e "${yellow}Ожидаем запуска панели...${plain}" >&3
 for i in {1..15}; do
     sleep 2
-    if curl -s --max-time 2 "http://127.0.0.1:${PORT}/${CLEAN_PATH}/login" | grep -q "html" 2>/dev/null; then
+    if curl -s -k -L --max-time 3 "http://127.0.0.1:${PORT}/${CLEAN_PATH}/" | grep -qiE "html|3x-ui|x-ui|login" 2>/dev/null; then
         echo -e "${green}Панель готова.${plain}" >&3
         break
     fi
@@ -248,24 +254,36 @@ for i in {1..15}; do
     fi
 done
 
-# === Reality ключи ===
-KEYS=$(/usr/local/x-ui/bin/xray-linux-${ARCH} x25519)
-PRIVATE_KEY=$(echo "$KEYS" | grep -i "Private" | sed -E 's/.*Key:\s*//')
-PUBLIC_KEY=$(echo "$KEYS" | grep -i "Password" | sed -E 's/.*Password:\s*//')
-SHORT_IDS_JSON="[]"
-for len in 2 4 6 8 10 12 14 16; do
-    sid=$(head -c $((len/2)) /dev/urandom | xxd -p)
-    SHORT_IDS_JSON=$(echo "$SHORT_IDS_JSON" | jq --arg s "$sid" '. + [$s]')
-done
-SHORT_ID=$(echo "$SHORT_IDS_JSON" | jq -r '.[0]')
-SPIDER_X="/$(tr -dc 'a-zA-Z0-9' </dev/urandom | head -c 16)"
-UUID=$(cat /proc/sys/kernel/random/uuid)
+XRAY_BIN="/usr/local/x-ui/bin/xray-linux-${ARCH}"
+[[ -x "$XRAY_BIN" ]] || XRAY_BIN=$(find /usr/local/x-ui/bin -maxdepth 1 -type f -name 'xray-linux-*' | head -n1)
+
+KEYS=$("$XRAY_BIN" x25519 2>&1)
+PRIVATE_KEY=$(echo "$KEYS" | awk -F': ' '/[Pp]rivate/{print $NF}' | tr -d '[:space:]')
+PUBLIC_KEY=$(echo "$KEYS" | awk -F': ' '/[Pp]ublic|[Pp]assword/{print $NF}' | tr -d '[:space:]')
+
+# === Постквантовое VLESS Encryption (ML-KEM-768 + X25519), защита от анализа TLS-хендшейка ===
+VLESSENC_OUTPUT=$("$XRAY_BIN" vlessenc 2>&1)
+PQ_DECRYPTION=$(echo "$VLESSENC_OUTPUT" | awk '/ML-KEM-768, Post-Quantum/{f=1} f && /"decryption"/{print; exit}' | sed -E 's/.*"decryption": *"([^"]*)".*/\1/')
+PQ_ENCRYPTION=$(echo "$VLESSENC_OUTPUT" | awk '/ML-KEM-768, Post-Quantum/{f=1} f && /"encryption"/{print; exit}' | sed -E 's/.*"encryption": *"([^"]*)".*/\1/')
+if [[ -z "$PQ_DECRYPTION" || -z "$PQ_ENCRYPTION" ]]; then
+    echo -e "${yellow}Не удалось сгенерировать постквантовое шифрование VLESS, используем decryption/encryption: none${plain}" >&3
+    PQ_DECRYPTION="none"
+    PQ_ENCRYPTION="none"
+else
+    echo -e "${green}Постквантовое шифрование VLESS (ML-KEM-768) сгенерировано.${plain}" >&3
+fi
+
+UUID=$(cat /proc/sys/kernel/random/uuid 2>/dev/null || gen_random_string 36)
 EMAIL=$(tr -dc 'a-z0-9' </dev/urandom | head -c 8)
 
-# === API авторизация ===
+HYSTERIA_PASSWORD=$(tr -dc 'a-zA-Z0-9' </dev/urandom | head -c 16)
+SALAMANDER_PASSWORD=$(tr -dc 'a-zA-Z0-9' </dev/urandom | head -c 16)
+
+# === Аутентификация в x-ui API ===
 COOKIE_JAR=$(mktemp)
 
 # Получаем CSRF-токен и стартовую сессионную cookie через GET на страницу логина
+# (начиная с x-ui v3.0.0 добавлена CSRF-защита — без токена POST /login вернёт 403)
 LOGIN_PAGE=$(curl -s -c "$COOKIE_JAR" "http://127.0.0.1:${PORT}/${CLEAN_PATH}/")
 CSRF_TOKEN=$(echo "$LOGIN_PAGE" | grep -oP 'name="csrf-token" content="\K[^"]+')
 
@@ -280,41 +298,92 @@ LOGIN_RESPONSE=$(curl -s -b "$COOKIE_JAR" -c "$COOKIE_JAR" -X POST "http://127.0
   -d "{\"username\": \"${USERNAME}\", \"password\": \"${PASSWORD}\"}")
 
 if ! echo "$LOGIN_RESPONSE" | grep -q '"success":true'; then
-    echo -e "${red}Ошибка авторизации.${plain}" >&3
+    echo -e "${red}Ошибка авторизации через API.${plain}" >&3
     echo "$LOGIN_RESPONSE" >&3
     exit 1
 fi
 
-SETTINGS_JSON=$(jq -nc --arg uuid "$UUID" --arg email "$EMAIL" '{
-  clients: [{id: $uuid, flow: "xtls-rprx-vision", email: $email, enable: true}],
-  decryption: "none"
+# === Генерация уникального SpiderX, SubID и массивов ShortIds ===
+SPIDER_X="/$(tr -dc 'a-zA-Z0-9' </dev/urandom | head -c 16)"
+SUB_ID=$(tr -dc 'a-zA-Z0-9' </dev/urandom | head -c 16)
+NOW_MS=$(date +%s%3N 2>/dev/null || echo "$(date +%s)000")
+
+SHORT_IDS_JSON="[]"
+for len in 2 4 6 8 10 12 14 16; do
+    sid=$(head -c $((len/2)) /dev/urandom | xxd -p)
+    SHORT_IDS_JSON=$(echo "$SHORT_IDS_JSON" | jq --arg s "$sid" '. + [$s]')
+done
+# Фикс: ссылка клиента должна использовать shortId ИЗ этого же массива, а не отдельный случайный
+SHORT_ID=$(echo "$SHORT_IDS_JSON" | jq -r '.[0]')
+
+# === Формирование JSON для VLESS Reality ===
+SETTINGS_JSON=$(jq -nc \
+  --arg uuid "$UUID" \
+  --arg email "$EMAIL" \
+  --arg subid "$SUB_ID" \
+  --arg decryption "$PQ_DECRYPTION" \
+  --argjson created "$NOW_MS" '{
+  clients: [
+    {
+      id: $uuid,
+      email: $email,
+      flow: "xtls-rprx-vision",
+      limitIp: 0,
+      totalGB: 0,
+      expiryTime: 0,
+      enable: true,
+      tgId: 0,
+      subId: $subid,
+      comment: "",
+      reset: 0,
+      created_at: $created,
+      updated_at: $created
+    }
+  ],
+  decryption: $decryption
 }')
 
-# СТАЛО:
 STREAM_SETTINGS_JSON=$(jq -nc \
-  --arg pbk "$PUBLIC_KEY" --arg prk "$PRIVATE_KEY" \
+  --arg pbk "$PUBLIC_KEY" \
+  --arg prk "$PRIVATE_KEY" \
   --argjson sids "$SHORT_IDS_JSON" \
-  --arg dest "${BEST_DOMAIN}:443" --arg domain "$BEST_DOMAIN" \
+  --arg domain "$BEST_DOMAIN" \
   --arg spx "$SPIDER_X" '{
   network: "tcp",
-  tcpSettings: { acceptProxyProtocol: false, header: { type: "none" } },
+  tcpSettings: {
+    acceptProxyProtocol: false,
+    header: { type: "none" }
+  },
   security: "reality",
   realitySettings: {
-    show: false, xver: 0, target: $dest,
+    show: false,
+    xver: 0,
+    target: ($domain + ":443"),
     serverNames: [("www." + $domain), $domain],
-    privateKey: $prk, minClientVer: "", maxClientVer: "", maxTimediff: 0,
-    shortIds: $sids, mldsa65Seed: "",
+    privateKey: $prk,
+    minClientVer: "",
+    maxClientVer: "",
+    maxTimediff: 0,
+    shortIds: $sids,
+    mldsa65Seed: "",
     limitFallbackUpload: { afterBytes: 0, bytesPerSec: 0, burstBytesPerSec: 0 },
     limitFallbackDownload: { afterBytes: 0, bytesPerSec: 0, burstBytesPerSec: 0 },
     settings: {
-      publicKey: $pbk, fingerprint: "firefox", serverName: "",
-      spiderX: $spx, mldsa65Verify: ""
+      publicKey: $pbk,
+      fingerprint: "firefox",
+      serverName: "",
+      spiderX: $spx,
+      mldsa65Verify: ""
     }
   }
 }')
 
-SNIFFING_JSON=$(jq -nc '{enabled: true, destOverride: ["http", "tls"]}')
+SNIFFING_JSON=$(jq -nc '{
+  enabled: true,
+  destOverride: ["http", "tls"]
+}')
 
+# === Отправка VLESS инбаунда через API ===
 ADD_RESULT=$(curl -s -b "$COOKIE_JAR" -X POST "http://127.0.0.1:${PORT}/${CLEAN_PATH}/panel/api/inbounds/add" \
   -H "Content-Type: application/json" \
   -H "X-CSRF-Token: ${CSRF_TOKEN}" \
@@ -322,209 +391,258 @@ ADD_RESULT=$(curl -s -b "$COOKIE_JAR" -X POST "http://127.0.0.1:${PORT}/${CLEAN_
     --argjson settings "$SETTINGS_JSON" \
     --argjson stream "$STREAM_SETTINGS_JSON" \
     --argjson sniffing "$SNIFFING_JSON" \
-    --arg remark "$INBOUND_REMARK" \
-    --argjson port "$INBOUND_PORT" \
-    '{enable: true, remark: $remark, listen: "", port: $port, protocol: "vless",
-      settings: ($settings | tostring), streamSettings: ($stream | tostring), sniffing: ($sniffing | tostring)}')")
+    --arg port "$REALITY_PORT" \
+    '{
+      enable: true,
+      remark: "VLESS-Reality",
+      listen: "",
+      port: ($port | tonumber),
+      protocol: "vless",
+      tag: ("in-" + $port + "-tcp"),
+      settings: ($settings | tostring),
+      streamSettings: ($stream | tostring),
+      sniffing: ($sniffing | tostring)
+    }')"
+)
 
 if echo "$ADD_RESULT" | grep -q '"success":true'; then
-    echo -e "${green}VLESS Reality инбаунд добавлен.${plain}" >&3
-    systemctl restart x-ui >>"$LOG_FILE" 2>&1
+    echo -e "${green}VLESS Reality инбаунд успешно добавлен.${plain}" >&3
 else
-    echo -e "${red}Ошибка при добавлении VLESS инбаунда:${plain}" >&3
+    echo -e "${red}Ошибка добавления VLESS инбаунда:${plain}" >&3
     echo "$ADD_RESULT" >&3
 fi
 
-# ============================================================
-# === HYSTERIA 2 (как инбаунд внутри x-ui) ===
-# ============================================================
-echo -e "\n${yellow}Добавление Hysteria2 в x-ui...${plain}" >&3
-
-HY2_CERT_DIR="/root/cert/ip"
-mkdir -p "$HY2_CERT_DIR"
-
+# === Проверка директории и сертификатов ===
+# Фикс: SERVER_IP нужен уже сейчас (для SAN в сертификате), не только в самом конце
 SERVER_IP=$(curl -s --max-time 3 https://api.ipify.org || curl -s --max-time 3 https://4.ident.me)
 
-if [[ ! -s "${HY2_CERT_DIR}/fullchain.pem" || ! -s "${HY2_CERT_DIR}/privkey.pem" ]]; then
+mkdir -p /root/cert/ip
+if [[ ! -s "/root/cert/ip/fullchain.pem" || ! -s "/root/cert/ip/privkey.pem" ]]; then
     openssl req -x509 -nodes -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 \
-        -keyout "${HY2_CERT_DIR}/privkey.pem" \
-        -out "${HY2_CERT_DIR}/fullchain.pem" \
-        -days 3650 \
-        -subj "/CN=${BEST_DOMAIN}" \
-        -addext "subjectAltName=IP:${SERVER_IP}" \
-        >>"$LOG_FILE" 2>&1
+        -keyout "/root/cert/ip/privkey.pem" -out "/root/cert/ip/fullchain.pem" \
+        -days 3650 -subj "/CN=${BEST_DOMAIN}" \
+        -addext "subjectAltName=IP:${SERVER_IP}" >/dev/null 2>&1
+    chmod 600 /root/cert/ip/privkey.pem
 fi
 
-SALAMANDER_PASSWORD=$(tr -dc 'a-zA-Z0-9' </dev/urandom | head -c 16)
-
+# === Формирование JSON для Hysteria2 ===
+NOW_MS=$(date +%s%3N 2>/dev/null || echo "$(date +%s)000")
+# Фикс: отдельный email для Hysteria2-клиента (иначе конфликт "Duplicate email" с VLESS-клиентом)
 HY2_EMAIL=$(tr -dc 'a-z0-9' </dev/urandom | head -c 8)
-HY2_SETTINGS_JSON=$(jq -nc --arg auth "$HY2_PASSWORD" --arg email "$HY2_EMAIL" '{
+
+HYSTERIA_SETTINGS_JSON=$(jq -nc \
+  --arg auth "$HYSTERIA_PASSWORD" \
+  --arg email "$HY2_EMAIL" \
+  --arg subid "$SUB_ID" \
+  --argjson created "$NOW_MS" '{
   clients: [
-    { auth: $auth, email: $email, limitIp: 0, totalGB: 0, expiryTime: 0,
-      enable: true, tgId: 0, subId: "", comment: "", reset: 0 }
+    {
+      auth: $auth,
+      email: $email,
+      limitIp: 0,
+      totalGB: 0,
+      expiryTime: 0,
+      enable: true,
+      tgId: 0,
+      subId: $subid,
+      comment: "",
+      reset: 0,
+      created_at: $created,
+      updated_at: $created
+    }
   ],
   version: 2
 }')
 
-HY2_STREAM_JSON=$(jq -nc \
+HYSTERIA_STREAM_JSON=$(jq -nc \
   --arg domain "$BEST_DOMAIN" \
-  --arg cert "${HY2_CERT_DIR}/fullchain.pem" \
-  --arg key "${HY2_CERT_DIR}/privkey.pem" \
   --arg salpass "$SALAMANDER_PASSWORD" '{
   network: "hysteria",
-  hysteriaSettings: { version: 2, udpIdleTimeout: 60 },
+  hysteriaSettings: {
+    version: 2,
+    udpIdleTimeout: 60
+  },
   security: "tls",
   tlsSettings: {
-    serverName: $domain, minVersion: "1.2", maxVersion: "1.3",
-    cipherSuites: "", rejectUnknownSni: false, disableSystemRoot: false,
+    serverName: $domain,
+    minVersion: "1.2",
+    maxVersion: "1.3",
+    cipherSuites: "",
+    rejectUnknownSni: false,
+    disableSystemRoot: false,
     enableSessionResumption: false,
-    certificates: [{ certificateFile: $cert, keyFile: $key, ocspStapling: 0,
-      oneTimeLoading: false, usage: "encipherment", buildChain: false, useFile: true }],
-    alpn: ["h3"], echServerKeys: "",
-    settings: { fingerprint: "firefox", echConfigList: "", pinnedPeerCertSha256: [], verifyPeerCertByName: "" }
+    certificates: [
+      {
+        certificateFile: "/root/cert/ip/fullchain.pem",
+        keyFile: "/root/cert/ip/privkey.pem",
+        ocspStapling: 0,
+        oneTimeLoading: false,
+        usage: "encipherment",
+        buildChain: false,
+        useFile: true
+      }
+    ],
+    alpn: ["h3"],
+    echServerKeys: "",
+    settings: {
+      fingerprint: "firefox",
+      echConfigList: "",
+      pinnedPeerCertSha256: [],
+      verifyPeerCertByName: ""
+    }
   },
-  finalmask: { udp: [{ type: "salamander", settings: { password: $salpass } }] }
+  finalmask: {
+    udp: [
+      {
+        type: "salamander",
+        settings: {
+          password: $salpass
+        }
+      }
+    ]
+  }
 }')
 
+SNIFFING_JSON=$(jq -nc '{
+  enabled: true,
+  destOverride: ["http", "tls"]
+}')
+
+# === Отправка Hysteria инбаунда через API ===
 ADD_HY2_RESULT=$(curl -s -b "$COOKIE_JAR" -X POST "http://127.0.0.1:${PORT}/${CLEAN_PATH}/panel/api/inbounds/add" \
   -H "Content-Type: application/json" \
   -H "X-CSRF-Token: ${CSRF_TOKEN}" \
   -d "$(jq -nc \
-    --argjson settings "$HY2_SETTINGS_JSON" \
-    --argjson stream "$HY2_STREAM_JSON" \
+    --argjson settings "$HYSTERIA_SETTINGS_JSON" \
+    --argjson stream "$HYSTERIA_STREAM_JSON" \
     --argjson sniffing "$SNIFFING_JSON" \
-    --arg port "$HY2_PORT" \
-    '{enable: true, remark: "Hysteria2", listen: "", port: ($port|tonumber),
-      protocol: "hysteria", tag: ("in-" + $port + "-udp"),
-      settings: ($settings | tostring), streamSettings: ($stream | tostring),
-      sniffing: ($sniffing | tostring)}')")
+    --arg port "$HYSTERIA_PORT" \
+    '{
+      enable: true,
+      remark: "Hysteria2",
+      listen: "",
+      port: ($port | tonumber),
+      protocol: "hysteria",
+      tag: ("in-" + $port + "-udp"),
+      settings: ($settings | tostring),
+      streamSettings: ($stream | tostring),
+      sniffing: ($sniffing | tostring)
+    }')"
+)
 
+# Проверку статуса выносим СРАЗУ после запроса:
 if echo "$ADD_HY2_RESULT" | grep -q '"success":true'; then
-    echo -e "${green}Hysteria2 инбаунд добавлен в x-ui.${plain}" >&3
-    HY2_OK=true
+    echo -e "${green}Hysteria2 инбаунд успешно добавлен.${plain}" >&3
 else
-    echo -e "${red}Ошибка добавления Hysteria2:${plain}" >&3
+    echo -e "${red}Ошибка добавления Hysteria2 инбаунда:${plain}" >&3
     echo "$ADD_HY2_RESULT" >&3
-    HY2_OK=false
 fi
 
-# === WARP ===
+# === Блок установки и настройки WARP ===
 if [[ "$INSTALL_WARP" == true ]]; then
-    if command -v warp-cli &>/dev/null && warp-cli status 2>/dev/null | grep -q "Connected"; then
-        echo -e "${green}WARP уже установлен и подключён, пропускаем установку.${plain}" >&3
-        WARP_ALREADY_OK=true
-    else
-        echo -e "${yellow}Установка WARP...${plain}" >&3
-        wget -N https://gitlab.com/fscarmen/warp/-/raw/main/menu.sh -O /tmp/warp_menu.sh >/dev/null 2>&1
-        if [[ $? -eq 0 ]]; then
-            echo -e "1\n" | bash /tmp/warp_menu.sh c >/dev/null 2>&1
-            if [[ $? -eq 0 ]]; then
-            echo -e "${green}WARP установлен.${plain}" >&3
-            XRAY_CONFIG=$(jq -nc --arg inbound_tag "inbound-${INBOUND_PORT}" '{
-  "log": {"access": "none", "dnsLog": false, "error": "", "loglevel": "warning", "maskAddress": ""},
-  "api": {"tag": "api", "services": ["HandlerService", "LoggerService", "StatsService"]},
-  "inbounds": [{"tag": "api", "listen": "127.0.0.1", "port": 62789, "protocol": "dokodemo-door", "settings": {"address": "127.0.0.1"}}],
-  "outbounds": [
-    {"tag": "direct", "protocol": "freedom", "settings": {"domainStrategy": "AsIs", "redirect": "", "noises": []}},
-    {"tag": "blocked", "protocol": "blackhole", "settings": {}},
-    {"tag": "WARP", "protocol": "socks", "settings": {"servers": [{"address": "127.0.0.1", "port": 40000, "users": []}]}}
-  ],
-  "policy": {
-    "levels": {"0": {"statsUserDownlink": true, "statsUserUplink": true}},
-    "system": {"statsInboundDownlink": true, "statsInboundUplink": true, "statsOutboundDownlink": false, "statsOutboundUplink": false}
-  },
-  "routing": {
-    "domainStrategy": "AsIs",
-    "rules": [
-      {"type": "field", "inboundTag": ["api"], "outboundTag": "api"},
-      {"type": "field", "outboundTag": "blocked", "ip": ["geoip:private"]},
-      {"type": "field", "outboundTag": "blocked", "protocol": ["bittorrent"]},
-      {"type": "field", "inboundTag": [$inbound_tag], "outboundTag": "WARP"}
-    ]
-  },
-  "stats": {},
-  "metrics": {"tag": "metrics_out", "listen": "127.0.0.1:11111"}
-}')
-            XRAY_CONFIG_ENCODED=$(echo "$XRAY_CONFIG" | jq -sRr @uri)
-            UPDATE_RESPONSE=$(curl -s -b "$COOKIE_JAR" -X POST "http://127.0.0.1:${PORT}/${CLEAN_PATH}/panel/xray/update" \
-                -H "Content-Type: application/x-www-form-urlencoded" \
-                -H "X-CSRF-Token: ${CSRF_TOKEN}" \
-                --data-raw "xraySetting=${XRAY_CONFIG_ENCODED}")
-            if echo "$UPDATE_RESPONSE" | grep -q '"success":true'; then
-                curl -s -b "$COOKIE_JAR" -H "X-CSRF-Token: ${CSRF_TOKEN}" -X POST "http://127.0.0.1:${PORT}/${CLEAN_PATH}/server/restartXrayService" >>"$LOG_FILE" 2>&1
-                echo -e "${green}WARP подключён к VLESS инбаунду.${plain}" >&3
-            else
-                echo -e "${red}Ошибка обновления конфига Xray для WARP.${plain}" >&3
-            fi
-        else
-            echo -e "${red}Ошибка при установке WARP.${plain}" >&3
-        fi
+    echo -e "${yellow}Установка Cloudflare WARP...${plain}" >&3
+    if wget -N https://gitlab.com/fscarmen/warp/-/raw/main/menu.sh -O /tmp/warp_menu.sh >/dev/null 2>&1; then
+        echo -e "1\n" | bash /tmp/warp_menu.sh c >/dev/null 2>&1
         rm -f /tmp/warp_menu.sh
+        echo -e "${green}Cloudflare WARP успешно установлен на сервер.${plain}" >&3
+        
+        echo -e "${yellow}Настройка маршрутизации WARP в 3x-ui...${plain}" >&3
+        
+        XRAY_CONFIG=$(jq -nc --arg vlesstag "in-${REALITY_PORT}-tcp" '{
+          log: { access: "none", dnsLog: false, error: "", loglevel: "warning" },
+          api: { tag: "api", services: ["HandlerService", "LoggerService", "StatsService"] },
+          inbounds: [
+            { tag: "api", listen: "127.0.0.1", port: 62789, protocol: "dokodemo-door", settings: { address: "127.0.0.1" } }
+          ],
+          outbounds: [
+            { tag: "direct", protocol: "freedom", settings: {} },
+            { tag: "blocked", protocol: "blackhole", settings: {} },
+            { tag: "WARP", protocol: "socks", settings: { servers: [{ address: "127.0.0.1", port: 40000 }] } }
+          ],
+          routing: {
+            domainStrategy: "AsIs",
+            rules: [
+              { type: "field", inboundTag: ["api"], outboundTag: "api" },
+              { type: "field", outboundTag: "blocked", ip: ["geoip:private"] },
+              { type: "field", outboundTag: "blocked", protocol: ["bittorrent"] },
+              { type: "field", inboundTag: [$vlesstag], outboundTag: "WARP" }
+            ]
+          }
+        }')
+
+        sqlite3 /etc/x-ui/x-ui.db "UPDATE configs SET value='$(echo "$XRAY_CONFIG" | sed "s/'/''/g")' WHERE key='xrayTemplateConfig';" 2>/dev/null || true
+        
+        curl -s -b "$COOKIE_JAR" -H "X-CSRF-Token: ${CSRF_TOKEN}" -X POST "http://127.0.0.1:${PORT}/${CLEAN_PATH}/server/restartXrayService" >/dev/null 2>&1
+        systemctl restart x-ui >>"$LOG_FILE" 2>&1
+        
+        echo -e "${green}Трафик VLESS Reality успешно перенаправлен через WARP!${plain}" >&3
     else
         echo -e "${red}Не удалось загрузить скрипт WARP.${plain}" >&3
     fi
 fi
-fi
 
 rm -f "$COOKIE_JAR"
 
-# ============================================================
-# === ИТОГОВЫЙ ВЫВОД ===
-# ============================================================
+# === Формирование итоговых ссылок подключения ===
 SERVER_IP=${SERVER_IP:-$(curl -s --max-time 3 https://api.ipify.org || curl -s --max-time 3 https://4.ident.me)}
 
 SPX_ENCODED=$(printf '%s' "$SPIDER_X" | sed 's/\//%2F/g')
-VLESS_LINK="vless://${UUID}@${SERVER_IP}:${INBOUND_PORT}?type=tcp&security=reality&encryption=none&flow=xtls-rprx-vision&sni=${BEST_DOMAIN}&fp=firefox&pbk=${PUBLIC_KEY}&sid=${SHORT_ID}&spx=${SPX_ENCODED}#${INBOUND_REMARK}"
-HY2_LINK="hysteria2://${HY2_PASSWORD}@${SERVER_IP}:${HY2_PORT}?insecure=1&sni=${BEST_DOMAIN}#hy2-${INBOUND_REMARK}"
+VLESS_LINK="vless://${UUID}@${SERVER_IP}:${REALITY_PORT}?type=tcp&security=reality&encryption=${PQ_ENCRYPTION}&flow=xtls-rprx-vision&sni=${BEST_DOMAIN}&fp=firefox&pbk=${PUBLIC_KEY}&sid=${SHORT_ID}&spx=${SPX_ENCODED}#VLESS-Reality"
+HY2_LINK="hysteria2://${HYSTERIA_PASSWORD}@${SERVER_IP}:${HYSTERIA_PORT}?insecure=1&sni=${BEST_DOMAIN}#Hysteria2"
 
-echo -e "\n\033[1;32m══════════════════════════════════════\033[0m" >&3
-echo -e "\033[1;32m  VLESS Reality\033[0m" >&3
-echo -e "\033[1;32m══════════════════════════════════════\033[0m" >&3
+# === Вывод в консоль ===
+echo -e "\n\033[1;32m══════════════════════════════════════════════════\033[0m" >&3
+echo -e "\033[1;32m   VLESS Reality Ключ\033[0m" >&3
+echo -e "\033[1;32m══════════════════════════════════════════════════\033[0m" >&3
 echo -e "${cyan}${VLESS_LINK}${plain}" >&3
-echo ""
+echo -e "" >&3
 qrencode -t ANSIUTF8 "$VLESS_LINK"
-echo ""
+echo -e "" >&3
 
-if [[ "$HY2_OK" == "true" ]]; then
-    echo -e "\033[1;32m══════════════════════════════════════\033[0m" >&3
-    echo -e "\033[1;32m  Hysteria2\033[0m" >&3
-    echo -e "\033[1;32m══════════════════════════════════════\033[0m" >&3
-    echo -e "${cyan}${HY2_LINK}${plain}" >&3
-    echo ""
-    qrencode -t ANSIUTF8 "$HY2_LINK"
-    echo ""
-fi
+echo -e "\033[1;32m══════════════════════════════════════════════════\033[0m" >&3
+echo -e "\033[1;32m   Hysteria2 Ключ\033[0m" >&3
+echo -e "\033[1;32m══════════════════════════════════════════════════\033[0m" >&3
+echo -e "${cyan}${HY2_LINK}${plain}" >&3
+echo -e "" >&3
+qrencode -t ANSIUTF8 "$HY2_LINK"
+echo -e "" >&3
 
-echo -e "\033[1;32m══════════════════════════════════════\033[0m" >&3
-echo -e "\033[1;32m  Панель 3X-UI\033[0m" >&3
-echo -e "\033[1;32m══════════════════════════════════════\033[0m" >&3
-echo -e "Адрес:  ${cyan}http://${SERVER_IP}:${PORT}/${CLEAN_PATH}${plain}" >&3
-echo -e "Логин:  \033[1;33m${USERNAME}\033[0m" >&3
-echo -e "Пароль: \033[1;33m${PASSWORD}\033[0m" >&3
-echo ""
-echo -e "Данные сохранены: ${cyan}cat /root/3x-ui.txt${plain}" >&3
+echo -e "\033[1;32m══════════════════════════════════════════════════\033[0m" >&3
+echo -e "\033[1;32m   Панель управления 3X-UI\033[0m" >&3
+echo -e "\033[1;32m══════════════════════════════════════════════════\033[0m" >&3
+echo -e "Адрес панели: \033[1;36mhttp://${SERVER_IP}:${PORT}/${CLEAN_PATH}\033[0m" >&3
+echo -e "Логин:        \033[1;33m${USERNAME}\033[0m" >&3
+echo -e "Пароль:       \033[1;33m${PASSWORD}\033[0m" >&3
+echo -e "" >&3
+echo -e "Инструкции по настройке VPN клиентов:" >&3
+echo -e "\033[1;34mhttps://github.com/YukiKras/wiki/blob/main/nastroikavpn.md\033[0m" >&3
+echo -e "" >&3
+echo -e "Все данные сохранены в файл: \033[1;36m/root/3x-ui.txt\033[0m" >&3
+echo -e "Для просмотра в будущем введите: \033[0;36mcat /root/3x-ui.txt\033[0m\n" >&3
 
+# === Запись всех данных в /root/3x-ui.txt ===
 {
 echo "======================================"
-echo "  VLESS Reality"
+echo "   VLESS Reality"
 echo "======================================"
 echo "$VLESS_LINK"
 echo ""
-echo "Инбаунд: ${INBOUND_REMARK} | Порт: ${INBOUND_PORT} | SNI: ${BEST_DOMAIN}"
+echo "Порт: ${REALITY_PORT} | SNI: ${BEST_DOMAIN}"
 echo ""
-if [[ "$HY2_OK" == "true" ]]; then
 echo "======================================"
-echo "  Hysteria2"
+echo "   Hysteria2"
 echo "======================================"
 echo "$HY2_LINK"
 echo ""
-echo "Порт: ${HY2_PORT} | Пароль: ${HY2_PASSWORD}"
+echo "Порт: ${HYSTERIA_PORT} | SNI: ${BEST_DOMAIN}"
 echo ""
-fi
 echo "======================================"
-echo "  Панель 3X-UI"
+echo "   Панель управления 3X-UI"
 echo "======================================"
 echo "Адрес:  http://${SERVER_IP}:${PORT}/${CLEAN_PATH}"
 echo "Логин:  ${USERNAME}"
 echo "Пароль: ${PASSWORD}"
-} >> /root/3x-ui.txt
+echo ""
+echo "Инструкции по настройке VPN клиентов:"
+echo "https://github.com/YukiKras/wiki/blob/main/nastroikavpn.md"
+} > /root/3x-ui.txt
