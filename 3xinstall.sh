@@ -32,7 +32,6 @@ if command -v x-ui &> /dev/null; then
     systemctl stop x-ui 2>/dev/null || true
     systemctl unmask x-ui &>/dev/null || true
     rm -rf /usr/local/x-ui /etc/x-ui /usr/bin/x-ui /etc/systemd/system/x-ui.service
-    # Чистим возможные остатки отдельного (не через x-ui) сервиса Hysteria2 от старых версий скрипта
     systemctl stop hysteria 2>/dev/null || true
     systemctl disable hysteria 2>/dev/null || true
     rm -rf /usr/local/hysteria /etc/hysteria /etc/systemd/system/hysteria.service
@@ -42,8 +41,8 @@ if command -v x-ui &> /dev/null; then
     echo "x-ui успешно удалена. Продолжаем выполнение скрипта..."
 fi
 
-# Вывод всех команд кроме диалога — в лог
-exec 3>&1  # Сохраняем stdout для сообщений пользователю
+
+exec 3>&1
 LOG_FILE="/var/log/3x-ui_install_log.txt"
 exec > >(tee -a "$LOG_FILE") 2> >(tee -a "$LOG_FILE" >&2)
 
@@ -88,7 +87,7 @@ if [[ $EUID -ne 0 ]]; then
     exit 1
 fi
 
-# === BBR + оптимизация ===
+
 echo -e "${yellow}Настройка TCP BBR и сетевых буферов...${plain}" >&3
 KERNEL_VERSION=$(uname -r | cut -d. -f1-2 | tr -d '.')
 if [[ "$KERNEL_VERSION" -ge 49 ]]; then
@@ -202,7 +201,6 @@ else
     wget -q -O /etc/systemd/system/x-ui.service https://raw.githubusercontent.com/MHSanaei/3x-ui/main/x-ui.service
 fi
 
-# Фикс: если файл не скачался/пустой (masked/does not exist) — тихо используем встроенный шаблон
 if [[ ! -s /etc/systemd/system/x-ui.service ]]; then
     cat > /etc/systemd/system/x-ui.service <<'EOF'
 [Unit]
@@ -264,10 +262,6 @@ KEYS=$("$XRAY_BIN" x25519 2>&1)
 PRIVATE_KEY=$(echo "$KEYS" | awk -F': ' '/[Pp]rivate/{print $NF}' | tr -d '[:space:]')
 PUBLIC_KEY=$(echo "$KEYS" | awk -F': ' '/[Pp]ublic|[Pp]assword/{print $NF}' | tr -d '[:space:]')
 
-# === VLESS Encryption (гибридный обмен ключами mlkem768x25519plus, аутентификация X25519) ===
-# Обмен ключами в обоих режимах ("X25519" и "ML-KEM-768") одинаково постквантово-безопасен —
-# разница только в способе аутентификации сервера. Берём X25519: ключи короткие (~43 симв.),
-# как и в стандартной практике, тогда как режим ML-KEM-768 даёт ключи на ~1500+ символов и ломает QR-код.
 VLESSENC_OUTPUT=$("$XRAY_BIN" vlessenc 2>&1)
 PQ_DECRYPTION=$(echo "$VLESSENC_OUTPUT" | awk '/Authentication: X25519/{f=1} f && /"decryption"/{print; exit}' | sed -E 's/.*"decryption": *"([^"]*)".*/\1/')
 PQ_ENCRYPTION=$(echo "$VLESSENC_OUTPUT" | awk '/Authentication: X25519/{f=1} f && /"encryption"/{print; exit}' | sed -E 's/.*"encryption": *"([^"]*)".*/\1/')
@@ -285,11 +279,8 @@ EMAIL=$(tr -dc 'a-z0-9' </dev/urandom | head -c 8)
 HYSTERIA_PASSWORD=$(tr -dc 'a-zA-Z0-9' </dev/urandom | head -c 16)
 SALAMANDER_PASSWORD=$(tr -dc 'a-zA-Z0-9' </dev/urandom | head -c 16)
 
-# === Аутентификация в x-ui API ===
 COOKIE_JAR=$(mktemp)
 
-# Получаем CSRF-токен и стартовую сессионную cookie через GET на страницу логина
-# (начиная с x-ui v3.0.0 добавлена CSRF-защита — без токена POST /login вернёт 403)
 LOGIN_PAGE=$(curl -s -c "$COOKIE_JAR" "http://127.0.0.1:${PORT}/${CLEAN_PATH}/")
 CSRF_TOKEN=$(echo "$LOGIN_PAGE" | grep -oP 'name="csrf-token" content="\K[^"]+')
 
@@ -309,7 +300,6 @@ if ! echo "$LOGIN_RESPONSE" | grep -q '"success":true'; then
     exit 1
 fi
 
-# === Генерация уникального SpiderX, SubID и массивов ShortIds ===
 SPIDER_X="/$(tr -dc 'a-zA-Z0-9' </dev/urandom | head -c 16)"
 SUB_ID=$(tr -dc 'a-zA-Z0-9' </dev/urandom | head -c 16)
 NOW_MS=$(date +%s%3N 2>/dev/null || echo "$(date +%s)000")
@@ -319,10 +309,8 @@ for len in 2 4 6 8 10 12 14 16; do
     sid=$(head -c $((len/2)) /dev/urandom | xxd -p)
     SHORT_IDS_JSON=$(echo "$SHORT_IDS_JSON" | jq --arg s "$sid" '. + [$s]')
 done
-# Фикс: ссылка клиента должна использовать shortId ИЗ этого же массива, а не отдельный случайный
 SHORT_ID=$(echo "$SHORT_IDS_JSON" | jq -r '.[0]')
 
-# === Формирование JSON для VLESS Reality ===
 SETTINGS_JSON=$(jq -nc \
   --arg uuid "$UUID" \
   --arg email "$EMAIL" \
@@ -391,7 +379,6 @@ SNIFFING_JSON=$(jq -nc '{
   destOverride: ["http", "tls"]
 }')
 
-# === Отправка VLESS инбаунда через API ===
 ADD_RESULT=$(curl -s -b "$COOKIE_JAR" -X POST "http://127.0.0.1:${PORT}/${CLEAN_PATH}/panel/api/inbounds/add" \
   -H "Content-Type: application/json" \
   -H "X-CSRF-Token: ${CSRF_TOKEN}" \
@@ -420,8 +407,6 @@ else
     echo "$ADD_RESULT" >&3
 fi
 
-# === Проверка директории и сертификатов ===
-# Фикс: SERVER_IP нужен уже сейчас (для SAN в сертификате), не только в самом конце
 SERVER_IP=$(curl -s --max-time 3 https://api.ipify.org || curl -s --max-time 3 https://4.ident.me)
 
 mkdir -p /root/cert/ip
@@ -433,9 +418,7 @@ if [[ ! -s "/root/cert/ip/fullchain.pem" || ! -s "/root/cert/ip/privkey.pem" ]];
     chmod 600 /root/cert/ip/privkey.pem
 fi
 
-# === Формирование JSON для Hysteria2 ===
 NOW_MS=$(date +%s%3N 2>/dev/null || echo "$(date +%s)000")
-# Фикс: отдельный email для Hysteria2-клиента (иначе конфликт "Duplicate email" с VLESS-клиентом)
 HY2_EMAIL=$(tr -dc 'a-z0-9' </dev/urandom | head -c 8)
 
 HYSTERIA_SETTINGS_JSON=$(jq -nc \
@@ -538,7 +521,6 @@ ADD_HY2_RESULT=$(curl -s -b "$COOKIE_JAR" -X POST "http://127.0.0.1:${PORT}/${CL
     }')"
 )
 
-# Проверку статуса выносим СРАЗУ после запроса:
 if echo "$ADD_HY2_RESULT" | grep -q '"success":true'; then
     echo -e "${green}Hysteria2 инбаунд успешно добавлен.${plain}" >&3
 else
@@ -546,7 +528,6 @@ else
     echo "$ADD_HY2_RESULT" >&3
 fi
 
-# === Блок установки и настройки WARP ===
 if [[ "$INSTALL_WARP" == true ]]; then
     echo -e "${yellow}Установка Cloudflare WARP...${plain}" >&3
     if wget -N https://gitlab.com/fscarmen/warp/-/raw/main/menu.sh -O /tmp/warp_menu.sh >/dev/null 2>&1; then
@@ -591,14 +572,12 @@ fi
 
 rm -f "$COOKIE_JAR"
 
-# === Формирование итоговых ссылок подключения ===
 SERVER_IP=${SERVER_IP:-$(curl -s --max-time 3 https://api.ipify.org || curl -s --max-time 3 https://4.ident.me)}
 
 SPX_ENCODED=$(printf '%s' "$SPIDER_X" | sed 's/\//%2F/g')
 VLESS_LINK="vless://${UUID}@${SERVER_IP}:${REALITY_PORT}?type=tcp&security=reality&encryption=${PQ_ENCRYPTION}&flow=xtls-rprx-vision&sni=${BEST_DOMAIN}&fp=firefox&pbk=${PUBLIC_KEY}&sid=${SHORT_ID}&spx=${SPX_ENCODED}#VLESS-Reality"
 HY2_LINK="hysteria2://${HYSTERIA_PASSWORD}@${SERVER_IP}:${HYSTERIA_PORT}?insecure=1&alpn=h3&fp=firefox&obfs=salamander&obfs-password=${SALAMANDER_PASSWORD}&security=tls&sni=${BEST_DOMAIN}#Hysteria2-${HY2_EMAIL}"
 
-# === Вывод в консоль ===
 echo -e "\n\033[1;32m══════════════════════════════════════════════════\033[0m" >&3
 echo -e "\033[1;32m   VLESS Reality Ключ\033[0m" >&3
 echo -e "\033[1;32m══════════════════════════════════════════════════\033[0m" >&3
@@ -628,7 +607,6 @@ echo -e "" >&3
 echo -e "Все данные сохранены в файл: \033[1;36m/root/3x-ui.txt\033[0m" >&3
 echo -e "Для просмотра в будущем введите: \033[0;36mcat /root/3x-ui.txt\033[0m\n" >&3
 
-# === Запись всех данных в /root/3x-ui.txt ===
 {
 echo "======================================"
 echo "   VLESS Reality"
