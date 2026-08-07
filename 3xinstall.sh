@@ -20,14 +20,16 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+# === Проверка на уже установленную панель x-ui ===
 if command -v x-ui &> /dev/null; then
     echo "Обнаружена установленная панель x-ui."
     read -p "Вы хотите переустановить x-ui? [y/N]: " confirm
-    confirm=${confirm,,}
+    confirm=${confirm,,}  # перевод ответа в нижний регистр
     if [[ "$confirm" != "y" && "$confirm" != "yes" ]]; then
         echo "Отмена. Скрипт завершает работу."
         exit 1
     fi
+
     echo "Удаление x-ui..."
     systemctl stop x-ui 2>/dev/null || true
     systemctl unmask x-ui &>/dev/null || true
@@ -40,7 +42,6 @@ if command -v x-ui &> /dev/null; then
     rm -f /root/3x-ui.txt
     echo "x-ui успешно удалена. Продолжаем выполнение скрипта..."
 fi
-
 
 exec 3>&1
 LOG_FILE="/var/log/3x-ui_install_log.txt"
@@ -87,7 +88,7 @@ if [[ $EUID -ne 0 ]]; then
     exit 1
 fi
 
-
+# === Настройка TCP BBR и увеличенных сетевых буферов ===
 echo -e "${yellow}Настройка TCP BBR и сетевых буферов...${plain}" >&3
 KERNEL_VERSION=$(uname -r | cut -d. -f1-2 | tr -d '.')
 if [[ "$KERNEL_VERSION" -ge 49 ]]; then
@@ -118,6 +119,7 @@ else
     echo -e "${yellow}Ядро не поддерживает BBR. Пропускаем.${plain}" >&3
 fi
 
+# === Определение операционной системы ===
 if [[ -f /etc/os-release ]]; then
     source /etc/os-release
     release=$ID
@@ -139,7 +141,6 @@ arch() {
     esac
 }
 ARCH=$(arch)
-
 
 case "${release}" in
     ubuntu | debian | armbian)
@@ -168,7 +169,7 @@ case "${release}" in
         ;;
 esac
 
-#3x-ui
+# === 3x-ui ===
 cd /usr/local/ || exit 1
 FILE="x-ui-linux-${ARCH}.tar.gz"
 URL="https://github.com/MHSanaei/3x-ui/releases/download/v3.6.0/${FILE}"
@@ -240,7 +241,6 @@ systemctl daemon-reload >>"$LOG_FILE" 2>&1
 systemctl enable x-ui >>"$LOG_FILE" 2>&1
 systemctl start x-ui >>"$LOG_FILE" 2>&1
 
-
 CLEAN_PATH=$(echo "$WEBPATH" | sed 's@^/@@;s@/$@@')
 
 echo -e "${yellow}Ожидаем запуска панели...${plain}" >&3
@@ -255,6 +255,7 @@ for i in {1..15}; do
     fi
 done
 
+# === Генерация ключей Reality и VLESS Encryption ===
 XRAY_BIN="/usr/local/x-ui/bin/xray-linux-${ARCH}"
 [[ -x "$XRAY_BIN" ]] || XRAY_BIN=$(find /usr/local/x-ui/bin -maxdepth 1 -type f -name 'xray-linux-*' | head -n1)
 
@@ -311,6 +312,7 @@ for len in 2 4 6 8 10 12 14 16; do
 done
 SHORT_ID=$(echo "$SHORT_IDS_JSON" | jq -r '.[0]')
 
+# Настройки клиента VLESS
 SETTINGS_JSON=$(jq -nc \
   --arg uuid "$UUID" \
   --arg email "$EMAIL" \
@@ -499,7 +501,6 @@ SNIFFING_JSON=$(jq -nc '{
   destOverride: ["http", "tls"]
 }')
 
-# === Отправка Hysteria инбаунда через API ===
 ADD_HY2_RESULT=$(curl -s -b "$COOKIE_JAR" -X POST "http://127.0.0.1:${PORT}/${CLEAN_PATH}/panel/api/inbounds/add" \
   -H "Content-Type: application/json" \
   -H "X-CSRF-Token: ${CSRF_TOKEN}" \
@@ -528,48 +529,7 @@ else
     echo "$ADD_HY2_RESULT" >&3
 fi
 
-bash
-if [[ "$INSTALL_WARP" == true ]]; then
-    echo -e "${yellow}Установка Cloudflare WARP...${plain}" >&3
-    if wget -N https://gitlab.com/fscarmen/warp/-/raw/main/menu.sh -O /tmp/warp_menu.sh >/dev/null 2>&1; then
-        echo -e "1\n" | bash /tmp/warp_menu.sh c >/dev/null 2>&1
-        rm -f /tmp/warp_menu.sh
-        echo -e "${green}Cloudflare WARP успешно установлен на сервер.${plain}" >&3
-        
-        echo -e "${yellow}Настройка маршрутизации WARP в 3x-ui...${plain}" >&3
-        XRAY_CURRENT=$(curl -s -b "$COOKIE_JAR" -H "X-CSRF-Token: ${CSRF_TOKEN}" -X POST "http://127.0.0.1:${PORT}/${CLEAN_PATH}/panel/api/xray/")
-        CURRENT_XRAY_SETTING=$(echo "$XRAY_CURRENT" | jq -r '.obj.xraySetting')
-
-        if [[ -z "$CURRENT_XRAY_SETTING" || "$CURRENT_XRAY_SETTING" == "null" ]]; then
-            echo -e "${red}Не удалось получить текущий xraySetting, пропускаю настройку WARP.${plain}" >&3
-        else
-            NEW_XRAY_SETTING=$(echo "$CURRENT_XRAY_SETTING" | jq --arg vlesstag "in-${REALITY_PORT}-tcp" '
-              .outbounds += [{"tag":"WARP","protocol":"socks","settings":{"servers":[{"address":"127.0.0.1","port":40000}]}}] |
-              .routing.rules += [{"type":"field","inboundTag":[$vlesstag],"outboundTag":"WARP"}]
-            ')
-
-            XRAY_SETTING_ENCODED=$(printf '%s' "$NEW_XRAY_SETTING" | jq -sRr @uri)
-            WARP_UPDATE_RESPONSE=$(curl -s -b "$COOKIE_JAR" -H "X-CSRF-Token: ${CSRF_TOKEN}" -X POST "http://127.0.0.1:${PORT}/${CLEAN_PATH}/panel/api/xray/update" \
-              -H "Content-Type: application/x-www-form-urlencoded" \
-              --data-raw "xraySetting=${XRAY_SETTING_ENCODED}")
-
-            if echo "$WARP_UPDATE_RESPONSE" | grep -q '"success":true'; then
-                curl -s -b "$COOKIE_JAR" -H "X-CSRF-Token: ${CSRF_TOKEN}" -X POST "http://127.0.0.1:${PORT}/${CLEAN_PATH}/server/restartXrayService" >/dev/null 2>&1
-            else
-                echo -e "${red}Ошибка сохранения xraySetting с WARP:${plain}" >&3
-                echo "$WARP_UPDATE_RESPONSE" >&3
-            fi
-        fi
-        
-        echo -e "${green}Трафик VLESS Reality успешно перенаправлен через WARP!${plain}" >&3
-    else
-        echo -e "${red}Не удалось загрузить скрипт WARP.${plain}" >&3
-    fi
-fi
-
-На этот (исправленный):
-
-bash
+# === Установка и настройка Cloudflare WARP ===
 if [[ "$INSTALL_WARP" == true ]]; then
     echo -e "${yellow}Установка Cloudflare WARP...${plain}" >&3
     if wget -N https://gitlab.com/fscarmen/warp/-/raw/main/menu.sh -O /tmp/warp_menu.sh >/dev/null 2>&1; then
