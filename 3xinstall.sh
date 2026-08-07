@@ -32,6 +32,10 @@ if command -v x-ui &> /dev/null; then
     systemctl stop x-ui 2>/dev/null || true
     systemctl unmask x-ui &>/dev/null || true
     rm -rf /usr/local/x-ui /etc/x-ui /usr/bin/x-ui /etc/systemd/system/x-ui.service
+    # Чистим возможные остатки отдельного (не через x-ui) сервиса Hysteria2 от старых версий скрипта
+    systemctl stop hysteria 2>/dev/null || true
+    systemctl disable hysteria 2>/dev/null || true
+    rm -rf /usr/local/hysteria /etc/hysteria /etc/systemd/system/hysteria.service
     systemctl daemon-reexec
     systemctl daemon-reload
     rm -f /root/3x-ui.txt
@@ -76,7 +80,7 @@ DOMAINS=("ozon.ru" "games.mail.ru")
 BEST_DOMAIN=${DOMAINS[$RANDOM % ${#DOMAINS[@]}]}
 
 echo -e "${green}VLESS инбаунд: in-${REALITY_PORT}-tcp → порт ${REALITY_PORT}${plain}" >&3
-echo -e "${green}Hysteria2 порт: ${HYSTERIA_PORT}${plain}" >&3
+echo -e "${green}Hysteria2 инбаунд: in-${HYSTERIA_PORT}-udp → порт ${HYSTERIA_PORT}${plain}" >&3
 echo -e "${green}SNI / DEST: ${BEST_DOMAIN}${plain}" >&3
 
 if [[ $EUID -ne 0 ]]; then
@@ -198,9 +202,8 @@ else
     wget -q -O /etc/systemd/system/x-ui.service https://raw.githubusercontent.com/MHSanaei/3x-ui/main/x-ui.service
 fi
 
-# Фикс: если файл не скачался/пустой (masked/does not exist) — используем встроенный шаблон
+# Фикс: если файл не скачался/пустой (masked/does not exist) — тихо используем встроенный шаблон
 if [[ ! -s /etc/systemd/system/x-ui.service ]]; then
-    echo -e "${yellow}x-ui.service не скачался, использую встроенный шаблон${plain}" >&3
     cat > /etc/systemd/system/x-ui.service <<'EOF'
 [Unit]
 Description=x-ui Service
@@ -261,16 +264,19 @@ KEYS=$("$XRAY_BIN" x25519 2>&1)
 PRIVATE_KEY=$(echo "$KEYS" | awk -F': ' '/[Pp]rivate/{print $NF}' | tr -d '[:space:]')
 PUBLIC_KEY=$(echo "$KEYS" | awk -F': ' '/[Pp]ublic|[Pp]assword/{print $NF}' | tr -d '[:space:]')
 
-# === Постквантовое VLESS Encryption (ML-KEM-768 + X25519), защита от анализа TLS-хендшейка ===
+# === VLESS Encryption (гибридный обмен ключами mlkem768x25519plus, аутентификация X25519) ===
+# Обмен ключами в обоих режимах ("X25519" и "ML-KEM-768") одинаково постквантово-безопасен —
+# разница только в способе аутентификации сервера. Берём X25519: ключи короткие (~43 симв.),
+# как и в стандартной практике, тогда как режим ML-KEM-768 даёт ключи на ~1500+ символов и ломает QR-код.
 VLESSENC_OUTPUT=$("$XRAY_BIN" vlessenc 2>&1)
-PQ_DECRYPTION=$(echo "$VLESSENC_OUTPUT" | awk '/ML-KEM-768, Post-Quantum/{f=1} f && /"decryption"/{print; exit}' | sed -E 's/.*"decryption": *"([^"]*)".*/\1/')
-PQ_ENCRYPTION=$(echo "$VLESSENC_OUTPUT" | awk '/ML-KEM-768, Post-Quantum/{f=1} f && /"encryption"/{print; exit}' | sed -E 's/.*"encryption": *"([^"]*)".*/\1/')
+PQ_DECRYPTION=$(echo "$VLESSENC_OUTPUT" | awk '/Authentication: X25519/{f=1} f && /"decryption"/{print; exit}' | sed -E 's/.*"decryption": *"([^"]*)".*/\1/')
+PQ_ENCRYPTION=$(echo "$VLESSENC_OUTPUT" | awk '/Authentication: X25519/{f=1} f && /"encryption"/{print; exit}' | sed -E 's/.*"encryption": *"([^"]*)".*/\1/')
 if [[ -z "$PQ_DECRYPTION" || -z "$PQ_ENCRYPTION" ]]; then
-    echo -e "${yellow}Не удалось сгенерировать постквантовое шифрование VLESS, используем decryption/encryption: none${plain}" >&3
+    echo -e "${yellow}Не удалось сгенерировать VLESS Encryption, используем decryption/encryption: none${plain}" >&3
     PQ_DECRYPTION="none"
     PQ_ENCRYPTION="none"
 else
-    echo -e "${green}Постквантовое шифрование VLESS (ML-KEM-768) сгенерировано.${plain}" >&3
+    echo -e "${green}VLESS Encryption (mlkem768x25519plus) сгенерирован.${plain}" >&3
 fi
 
 UUID=$(cat /proc/sys/kernel/random/uuid 2>/dev/null || gen_random_string 36)
@@ -322,6 +328,7 @@ SETTINGS_JSON=$(jq -nc \
   --arg email "$EMAIL" \
   --arg subid "$SUB_ID" \
   --arg decryption "$PQ_DECRYPTION" \
+  --arg encryption "$PQ_ENCRYPTION" \
   --argjson created "$NOW_MS" '{
   clients: [
     {
@@ -340,7 +347,8 @@ SETTINGS_JSON=$(jq -nc \
       updated_at: $created
     }
   ],
-  decryption: $decryption
+  decryption: $decryption,
+  encryption: $encryption
 }')
 
 STREAM_SETTINGS_JSON=$(jq -nc \
