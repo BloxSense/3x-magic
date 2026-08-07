@@ -1,7 +1,7 @@
 
 # ⚡ 3X-UI Quick Deploy (VLESS Reality + Hysteria 2)
 
-Personal automated scripts for fast **VLESS Reality** & **Hysteria 2** setup via **3X-UI** with optional **Cloudflare WARP** integration.
+Personal automated scripts for fast **VLESS Reality** & **Hysteria 2** setup via **3X-UI**.
 
 ---
 
@@ -35,7 +35,7 @@ bash <(curl -Ls https://raw.githubusercontent.com/BloxSense/3x-magic/main/3xinst
 > Allows setting a **custom panel port** and configuring additional options.
 
 ```bash
-bash <(curl -Ls https://raw.githubusercontent.com/BloxSense/3x-magic/main/3xinstall.sh) --extend --warp
+bash <(curl -Ls https://raw.githubusercontent.com/BloxSense/3x-magic/main/3xinstall.sh) --extend
 
 ```
 
@@ -45,7 +45,6 @@ bash <(curl -Ls https://raw.githubusercontent.com/BloxSense/3x-magic/main/3xinst
 
 * 🔒 **VLESS Reality**: Pre-configured with `RAW` transport, `xtls-rprx-vision` flow & `ozon.ru` SNI.
 * 🚀 **Hysteria 2**: Configured with `Salamander` UDP-obfuscation & local SSL certificates.
-* 🌀 **WARP Integration**: Automated SOCKS5 proxy routing (`127.0.0.1:40000`).
 * 🎲 **100% Unique Data**: Automatically generates unique UUIDs, passwords, keys, and panel paths on every run.
 * 📊 **Credential Storage**: Saves all generated access links, passwords, and QR codes to `/root/3x-ui.txt`.
 
