@@ -574,11 +574,11 @@ rm -f "$COOKIE_JAR"
 SERVER_IP=${SERVER_IP:-$(curl -s --max-time 3 https://api.ipify.org || curl -s --max-time 3 https://4.ident.me)}
 
 SPX_ENCODED=$(printf '%s' "$SPIDER_X" | sed 's/\//%2F/g')
-VLESS_LINK="vless://${UUID}@${SERVER_IP}:${REALITY_PORT}?encryption=${PQ_ENCRYPTION}&flow=xtls-rprx-vision&fp=firefox&pbk=${PUBLIC_KEY}&security=reality&sid=${SHORT_ID}&sni=${BEST_DOMAIN}&spx=${SPX_ENCODED}&type=tcp#VLESS-Reality-${EMAIL}"
+VLESS_LINK="vless://${UUID}@${SERVER_IP}:${REALITY_PORT}?type=tcp&security=reality&encryption=${PQ_ENCRYPTION}&flow=xtls-rprx-vision&sni=${BEST_DOMAIN}&fp=firefox&pbk=${PUBLIC_KEY}&sid=${SHORT_ID}&spx=${SPX_ENCODED}#VLESS-Reality"
 HY2_LINK="hysteria2://${HYSTERIA_PASSWORD}@${SERVER_IP}:${HYSTERIA_PORT}?insecure=1&alpn=h3&fp=firefox&obfs=salamander&obfs-password=${SALAMANDER_PASSWORD}&security=tls&sni=${BEST_DOMAIN}#Hysteria2-${HY2_EMAIL}"
 
 echo -e "\n\033[1;32m══════════════════════════════════════════════════\033[0m" >&3
-echo -e "\033[1;32m   VLESS Reality Ключ\033[0m" >&3
+echo -e "\033[1;32m   VLESS Reality\033[0m" >&3
 echo -e "\033[1;32m══════════════════════════════════════════════════\033[0m" >&3
 echo -e "${cyan}${VLESS_LINK}${plain}" >&3
 echo -e "" >&3
@@ -586,7 +586,7 @@ qrencode -t ANSIUTF8 "$VLESS_LINK"
 echo -e "" >&3
 
 echo -e "\033[1;32m══════════════════════════════════════════════════\033[0m" >&3
-echo -e "\033[1;32m   Hysteria2 Ключ\033[0m" >&3
+echo -e "\033[1;32m   Hysteria2\033[0m" >&3
 echo -e "\033[1;32m══════════════════════════════════════════════════\033[0m" >&3
 echo -e "${cyan}${HY2_LINK}${plain}" >&3
 echo -e "" >&3
@@ -599,9 +599,6 @@ echo -e "\033[1;32m════════════════════�
 echo -e "Адрес панели: \033[1;36mhttp://${SERVER_IP}:${PORT}/${CLEAN_PATH}\033[0m" >&3
 echo -e "Логин:        \033[1;33m${USERNAME}\033[0m" >&3
 echo -e "Пароль:       \033[1;33m${PASSWORD}\033[0m" >&3
-echo -e "" >&3
-echo -e "Инструкции по настройке VPN клиентов:" >&3
-echo -e "\033[1;34mhttps://github.com/YukiKras/wiki/blob/main/nastroikavpn.md\033[0m" >&3
 echo -e "" >&3
 echo -e "Все данные сохранены в файл: \033[1;36m/root/3x-ui.txt\033[0m" >&3
 echo -e "Для просмотра в будущем введите: \033[0;36mcat /root/3x-ui.txt\033[0m\n" >&3
@@ -627,7 +624,5 @@ echo "======================================"
 echo "Адрес:  http://${SERVER_IP}:${PORT}/${CLEAN_PATH}"
 echo "Логин:  ${USERNAME}"
 echo "Пароль: ${PASSWORD}"
-echo ""
-echo "Инструкции по настройке VPN клиентов:"
-echo "https://github.com/YukiKras/wiki/blob/main/nastroikavpn.md"
+
 } > /root/3x-ui.txt
