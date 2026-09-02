@@ -101,10 +101,12 @@ remove_existing_xui() {
 
 
 sni_request() {
+    echo -e "" >&3
     echo -e "${cyan}Выберите SNI (Enter — вариант 1):${plain}"
     echo "  1. ${DOMAINS[0]}"
     echo "  2. ${DOMAINS[1]}"
     echo "  3. свой вариант"
+    echo -e "" >&3
     read -rp "Ваш выбор [1-3]: " sni_choice
     sni_choice=${sni_choice:-1}
 
@@ -126,14 +128,18 @@ sni_request() {
             ;;
     esac
 
+    echo -e "" >&3
     echo -e "${green}SNI / DEST: ${BEST_DOMAIN}${plain}"
+    echo -e "" >&3
 }
 
 
 client_check() {
+    echo -e "" >&3
     echo -e "${cyan}Установка клиенту? (Enter — вариант 1):${plain}"
     echo "  1. Да"
     echo "  2. Личное"
+    echo -e "" >&3
     read -rp "Ваш выбор [1-2]: " install_choice
     install_choice=${install_choice:-1}
 
@@ -157,7 +163,9 @@ prompt_port() {
         read -rp $'\033[0;33mВведите порт для панели (Enter для 8080): \033[0m' USER_PORT
         PORT=${USER_PORT:-8080}
     else
+        echo -e "" >&3
         echo -e "${yellow}Порт панели по умолчанию: ${PORT}${plain}" >&3
+        echo -e "" >&3
     fi
 
     echo -e "Лог установки: ${cyan}${LOG_FILE}${plain}" >&3
@@ -708,7 +716,8 @@ print_summary() {
 }
 
 print_client_summary() {
-    echo "" >&3
+    echo -e "\n\033[1;32m══════════════════════════════════════════════════\033[0m" >&3
+    echo -e "" >&3
     echo "VLESS Reality: \`${VLESS_LINK}\`" >&3
     echo "" >&3
     echo "Hysteria2: \`${HY2_LINK}\`" >&3
@@ -724,6 +733,11 @@ print_client_summary() {
     echo "V2Box на мобильном устройстве." >&3
     echo "" >&3
     echo "В Throne нажимаете по пустому ПКМ и выбираете добавить профиль из буфера обмена, в V2BOX в конфигурациях нажимаете + импортировать из буфера обмена." >&3
+    echo -e "" >&3
+    echo -e "Все данные сохранены в файл: \033[1;36m/root/3x-ui.txt\033[0m" >&3
+    echo -e "Для просмотра в будущем введите: \033[0;36mcat /root/3x-ui.txt\033[0m\n" >&3
+    echo -e "" >&3
+    echo -e "\n\033[1;32m══════════════════════════════════════════════════\033[0m" >&3
 }
 
 save_summary_file() {
