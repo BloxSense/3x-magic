@@ -1,6 +1,6 @@
 #!/bin/bash
 
-set -u
+set -eu
 
 EXTENDED_SETUP=false
 CLIENT_INSTALL=false
@@ -723,6 +723,7 @@ print_client_summary() {
     echo "Hysteria2: \`${HY2_LINK}\`" >&3
     echo "" >&3
     echo "Панель 3x-ui:" >&3
+    echo "" >&3
     echo "http://${SERVER_IP}:${PORT}/${CLEAN_PATH}" >&3
     echo "Логин: ${USERNAME}" >&3
     echo "Пароль: ${PASSWORD}" >&3
