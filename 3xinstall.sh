@@ -2,6 +2,7 @@
 
 set -eu
 
+EXTENDED_SETUP=false
 CLIENT_INSTALL=false
 
 red='\033[0;31m'
@@ -51,6 +52,21 @@ HY2_LINK=""
 gen_random_string() {
     local length="$1"
     LC_ALL=C tr -dc 'a-zA-Z0-9' </dev/urandom | fold -w "$length" | head -n 1
+}
+
+parse_args() {
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            --extend)
+                EXTENDED_SETUP=true
+                shift
+                ;;
+            *)
+                echo "Неизвестный аргумент: $1"
+                exit 1
+                ;;
+        esac
+    done
 }
 
 check_root() {
@@ -143,8 +159,14 @@ setup_logging() {
 }
 
 prompt_port() {
-    read -rp $'\033[0;33mВведите порт для панели (Enter для 8080): \033[0m' USER_PORT
-    PORT=${USER_PORT:-8080}
+    if [[ "$EXTENDED_SETUP" == true ]]; then
+        read -rp $'\033[0;33mВведите порт для панели (Enter для 8080): \033[0m' USER_PORT
+        PORT=${USER_PORT:-8080}
+    else
+        echo ""
+        echo -e "${yellow}Порт панели по умолчанию: ${PORT}${plain}" >&3
+        echo ""
+    fi
 
     echo -e "Лог установки: ${cyan}${LOG_FILE}${plain}" >&3
     echo -e "\n\033[1;34mИдёт установка... Пожалуйста, не закрывайте терминал.\033[0m"
@@ -166,15 +188,15 @@ setup_bbr() {
     local kernel_version
     kernel_version=$(uname -r | cut -d. -f1-2 | tr -d '.')
 
-    if [[ "$kernel_version" -le 49 ]]; then
+    if [[ "$kernel_version" -lt 49 ]]; then
         echo -e "${yellow}Ядро не поддерживает BBR. Пропускаем.${plain}" >&3
         return 0
     fi
 
     modprobe tcp_bbr 2>/dev/null || true
     local sysctl_conf="/etc/sysctl.d/99-bbr-optimize.conf"
-
-    echo "net.core.default_qdisc=fq
+    cat > "$sysctl_conf" <<'EOF'
+net.core.default_qdisc=fq
 net.ipv4.tcp_congestion_control=bbr
 net.core.rmem_max=134217728
 net.core.wmem_max=134217728
@@ -186,8 +208,7 @@ net.core.netdev_max_backlog=250000
 net.ipv4.tcp_fastopen=3
 net.ipv4.tcp_slow_start_after_idle=0
 net.ipv4.tcp_mtu_probing=1
-" > "$sysctl_conf"
-
+EOF
     sysctl -p "$sysctl_conf" >>"$LOG_FILE" 2>&1
 
     local current_cc
@@ -286,8 +307,9 @@ install_systemd_service() {
         wget -q -O /etc/systemd/system/x-ui.service https://raw.githubusercontent.com/MHSanaei/3x-ui/main/x-ui.service
     fi
 
-    if [[ ! -s "/etc/systemd/system/x-ui.service" ]]; then
-        echo "[Unit]
+    if [[ ! -s /etc/systemd/system/x-ui.service ]]; then
+        cat > /etc/systemd/system/x-ui.service <<'EOF'
+[Unit]
 Description=x-ui Service
 After=network.target
 
@@ -301,7 +323,7 @@ LimitNOFILE=infinity
 
 [Install]
 WantedBy=multi-user.target
-" > "/etc/systemd/system/x-ui.service"
+EOF
     fi
     systemctl unmask x-ui &>/dev/null || true
 }
@@ -757,9 +779,7 @@ print_results() {
 }
 
 main() {
-    check_root
-    detect_os
-    detect_arch
+    parse_args "$@"
 
     remove_existing_xui
     sni_request
@@ -768,8 +788,12 @@ main() {
     prompt_port
     generate_credentials
 
+    check_root
+
     setup_bbr
 
+    detect_os
+    detect_arch
     install_dependencies
 
     install_xui
