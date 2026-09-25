@@ -47,6 +47,8 @@ CSRF_TOKEN=""
 VLESS_LINK=""
 HY2_LINK=""
 
+PANEL_PROTO="http"
+
 gen_random_string() {
     local length="$1"
     LC_ALL=C tr -dc 'a-zA-Z0-9' </dev/urandom | fold -w "$length" | head -n 1
@@ -225,27 +227,33 @@ install_dependencies() {
     case "${release}" in
         ubuntu | debian | armbian)
             apt-get update > /dev/null 2>&1
-            apt-get install -y -q wget curl tar tzdata jq xxd qrencode sqlite3 > /dev/null 2>&1
+            apt-get install -y -q wget curl tar tzdata jq xxd qrencode sqlite3 socat cron > /dev/null 2>&1
+            systemctl enable --now cron >/dev/null 2>&1 || true
             ;;
         centos | rhel | almalinux | rocky | ol)
             yum -y update > /dev/null 2>&1
-            yum install -y -q wget curl tar tzdata jq xxd qrencode sqlite > /dev/null 2>&1
+            yum install -y -q wget curl tar tzdata jq xxd qrencode sqlite socat cronie > /dev/null 2>&1
+            systemctl enable --now crond >/dev/null 2>&1 || true
             ;;
         fedora | amzn | virtuozzo)
             dnf -y update > /dev/null 2>&1
-            dnf install -y -q wget curl tar tzdata jq xxd qrencode sqlite > /dev/null 2>&1
+            dnf install -y -q wget curl tar tzdata jq xxd qrencode sqlite socat cronie > /dev/null 2>&1
+            systemctl enable --now crond >/dev/null 2>&1 || true
             ;;
         arch | manjaro | parch)
             pacman -Syu --noconfirm > /dev/null 2>&1
-            pacman -S --noconfirm wget curl tar tzdata jq xxd qrencode sqlite > /dev/null 2>&1
+            pacman -S --noconfirm wget curl tar tzdata jq xxd qrencode sqlite socat cronie > /dev/null 2>&1
+            systemctl enable --now cronie >/dev/null 2>&1 || true
             ;;
         opensuse-tumbleweed)
             zypper refresh > /dev/null 2>&1
-            zypper install -y wget curl tar timezone jq xxd qrencode sqlite3 > /dev/null 2>&1
+            zypper install -y wget curl tar timezone jq xxd qrencode sqlite3 socat cron > /dev/null 2>&1
+            systemctl enable --now cron >/dev/null 2>&1 || true
             ;;
         *)
             apt-get update > /dev/null 2>&1
-            apt-get install -y wget curl tar tzdata jq xxd qrencode sqlite3 > /dev/null 2>&1
+            apt-get install -y wget curl tar tzdata jq xxd qrencode sqlite3 socat cron > /dev/null 2>&1
+            systemctl enable --now cron >/dev/null 2>&1 || true
             ;;
     esac
 }
@@ -398,7 +406,7 @@ panel_login() {
     COOKIE_JAR=$(mktemp)
 
     local login_page
-    login_page=$(curl -s -c "$COOKIE_JAR" "http://127.0.0.1:${PORT}/${CLEAN_PATH}/")
+    login_page=$(curl -s -k -c "$COOKIE_JAR" "${PANEL_PROTO}://127.0.0.1:${PORT}/${CLEAN_PATH}/")
     CSRF_TOKEN=$(echo "$login_page" | grep -oP 'name="csrf-token" content="\K[^"]+')
 
     if [[ -z "$CSRF_TOKEN" ]]; then
@@ -407,7 +415,7 @@ panel_login() {
     fi
 
     local login_response
-    login_response=$(curl -s -b "$COOKIE_JAR" -c "$COOKIE_JAR" -X POST "http://127.0.0.1:${PORT}/${CLEAN_PATH}/login" \
+    login_response=$(curl -s -k -b "$COOKIE_JAR" -c "$COOKIE_JAR" -X POST "${PANEL_PROTO}://127.0.0.1:${PORT}/${CLEAN_PATH}/login" \
         -H "Content-Type: application/json" \
         -H "X-CSRF-Token: ${CSRF_TOKEN}" \
         -d "{\"username\": \"${USERNAME}\", \"password\": \"${PASSWORD}\"}")
@@ -492,7 +500,7 @@ add_vless_reality_inbound() {
     sniffing_json=$(jq -nc '{ enabled: true, destOverride: ["http", "tls"] }')
 
     local add_result
-    add_result=$(curl -s -b "$COOKIE_JAR" -X POST "http://127.0.0.1:${PORT}/${CLEAN_PATH}/panel/api/inbounds/add" \
+    add_result=$(curl -s -k -b "$COOKIE_JAR" -X POST "${PANEL_PROTO}://127.0.0.1:${PORT}/${CLEAN_PATH}/panel/api/inbounds/add" \
         -H "Content-Type: application/json" \
         -H "X-CSRF-Token: ${CSRF_TOKEN}" \
         -d "$(jq -nc \
@@ -523,9 +531,70 @@ add_vless_reality_inbound() {
 
 generate_ip_certificate() {
     SERVER_IP=$(curl -s --max-time 3 https://api.ipify.org || curl -s --max-time 3 https://4.ident.me)
-
     mkdir -p /root/cert/ip
-    if [[ ! -s "/root/cert/ip/fullchain.pem" || ! -s "/root/cert/ip/privkey.pem" ]]; then
+
+    ACME_BIN="/root/.acme.sh/acme.sh"
+
+    if [[ ! -x "$ACME_BIN" ]]; then
+        for pkg_mgr in apt-get yum dnf pacman zypper; do
+            command -v "$pkg_mgr" &>/dev/null && break
+        done
+        case "$pkg_mgr" in
+            apt-get) apt-get install -y -q socat cron >/dev/null 2>&1; systemctl enable --now cron >/dev/null 2>&1 ;;
+            yum) yum install -y -q socat cronie >/dev/null 2>&1; systemctl enable --now crond >/dev/null 2>&1 ;;
+            dnf) dnf install -y -q socat cronie >/dev/null 2>&1; systemctl enable --now crond >/dev/null 2>&1 ;;
+            pacman) pacman -S --noconfirm socat cronie >/dev/null 2>&1; systemctl enable --now cronie >/dev/null 2>&1 ;;
+            zypper) zypper install -y socat cron >/dev/null 2>&1; systemctl enable --now cron >/dev/null 2>&1 ;;
+        esac
+        curl -s https://get.acme.sh | sh -s email="admin@${SERVER_IP}.nip.io" >>"$LOG_FILE" 2>&1
+    fi
+
+    local cert_ok=false
+    local existing_cert="/root/.acme.sh/${SERVER_IP}_ecc/${SERVER_IP}.cer"
+
+    if [[ -x "$ACME_BIN" ]]; then
+        if [[ -s "$existing_cert" ]] && openssl x509 -checkend 3600 -noout -in "$existing_cert" >/dev/null 2>&1; then
+            "$ACME_BIN" --install-cert -d "$SERVER_IP" --ecc \
+                --key-file /root/cert/ip/privkey.pem \
+                --fullchain-file /root/cert/ip/fullchain.pem \
+                --reloadcmd "systemctl restart x-ui" >>"$LOG_FILE" 2>&1
+            [[ -s "/root/cert/ip/fullchain.pem" && -s "/root/cert/ip/privkey.pem" ]] && cert_ok=true
+        else
+            local stopped_services=()
+            for svc in nginx apache2 httpd caddy; do
+                systemctl is-active --quiet "$svc" 2>/dev/null && systemctl stop "$svc" 2>/dev/null && stopped_services+=("$svc")
+            done
+
+            "$ACME_BIN" --issue -d "$SERVER_IP" --standalone --server letsencrypt --cert-profile shortlived >>"$LOG_FILE" 2>&1
+            local issue_status=$?
+
+            for svc in "${stopped_services[@]}"; do
+                systemctl start "$svc" 2>/dev/null || true
+            done
+
+            if [[ $issue_status -eq 0 ]]; then
+                "$ACME_BIN" --install-cert -d "$SERVER_IP" --ecc \
+                    --key-file /root/cert/ip/privkey.pem \
+                    --fullchain-file /root/cert/ip/fullchain.pem \
+                    --reloadcmd "systemctl restart x-ui" >>"$LOG_FILE" 2>&1
+                [[ -s "/root/cert/ip/fullchain.pem" && -s "/root/cert/ip/privkey.pem" ]] && cert_ok=true
+            fi
+        fi
+    fi
+
+    if [[ "$cert_ok" == true ]]; then
+        /usr/local/x-ui/x-ui setting -webCert /root/cert/ip/fullchain.pem -webCertKey /root/cert/ip/privkey.pem >>"$LOG_FILE" 2>&1
+        systemctl restart x-ui
+        for i in {1..15}; do
+            sleep 2
+            if curl -s -k -L --max-time 3 "https://127.0.0.1:${PORT}/${CLEAN_PATH}/" | grep -qiE "html|3x-ui|x-ui|login" 2>/dev/null; then
+                break
+            fi
+        done
+        PANEL_PROTO="https"
+    fi
+
+    if [[ "$cert_ok" != true ]]; then
         openssl req -x509 -nodes -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 \
             -keyout "/root/cert/ip/privkey.pem" -out "/root/cert/ip/fullchain.pem" \
             -days 3650 -subj "/CN=${BEST_DOMAIN}" \
@@ -617,7 +686,7 @@ add_hysteria2_inbound() {
     sniffing_json=$(jq -nc '{ enabled: true, destOverride: ["http", "tls"] }')
 
     local add_hy2_result
-    add_hy2_result=$(curl -s -b "$COOKIE_JAR" -X POST "http://127.0.0.1:${PORT}/${CLEAN_PATH}/panel/api/inbounds/add" \
+    add_hy2_result=$(curl -s -k -b "$COOKIE_JAR" -X POST "${PANEL_PROTO}://127.0.0.1:${PORT}/${CLEAN_PATH}/panel/api/inbounds/add" \
         -H "Content-Type: application/json" \
         -H "X-CSRF-Token: ${CSRF_TOKEN}" \
         -d "$(jq -nc \
@@ -647,9 +716,9 @@ add_hysteria2_inbound() {
 }
 
 setup_inbounds() {
+    generate_ip_certificate
     panel_login
     add_vless_reality_inbound
-    generate_ip_certificate
     add_hysteria2_inbound
     rm -f "$COOKIE_JAR"
 }
@@ -684,7 +753,7 @@ print_summary() {
     echo -e "\033[1;32m══════════════════════════════════════════════════\033[0m" >&3
     echo -e "\033[1;32m   Панель управления 3X-UI\033[0m" >&3
     echo -e "\033[1;32m══════════════════════════════════════════════════\033[0m" >&3
-    echo -e "Адрес панели: \033[1;36mhttp://${SERVER_IP}:${PORT}/${CLEAN_PATH}\033[0m" >&3
+    echo -e "Адрес панели: \033[1;36m${PANEL_PROTO}://${SERVER_IP}:${PORT}/${CLEAN_PATH}\033[0m" >&3
     echo -e "Логин:        \033[1;33m${USERNAME}\033[0m" >&3
     echo -e "Пароль:       \033[1;33m${PASSWORD}\033[0m" >&3
     echo -e "" >&3
@@ -701,7 +770,7 @@ print_client_summary() {
     echo "" >&3
     echo "Панель 3x-ui:" >&3
     echo "" >&3
-    echo "http://${SERVER_IP}:${PORT}/${CLEAN_PATH}" >&3
+    echo "${PANEL_PROTO}://${SERVER_IP}:${PORT}/${CLEAN_PATH}" >&3
     echo "Логин: ${USERNAME}" >&3
     echo "Пароль: ${PASSWORD}" >&3
     echo "" >&3
@@ -737,7 +806,7 @@ save_summary_file() {
         echo "======================================"
         echo "   Панель управления 3X-UI"
         echo "======================================"
-        echo "Адрес:  http://${SERVER_IP}:${PORT}/${CLEAN_PATH}"
+        echo "Адрес:  ${PANEL_PROTO}://${SERVER_IP}:${PORT}/${CLEAN_PATH}"
         echo "Логин:  ${USERNAME}"
         echo "Пароль: ${PASSWORD}"
     } > /root/3x-ui.txt
