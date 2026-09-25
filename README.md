@@ -30,7 +30,3 @@ After launching, just follow the interactive prompts (SNI choice, client vs. per
 - 📶 **TCP BBR** — buffer & congestion control tuning on supported kernels
 - 🎲 **100% unique data** — UUIDs, passwords, keys, panel path regenerated on every run
 - 💾 **Credential storage** — all links, passwords, and panel access saved to `/root/3x-ui.txt`
-
-## License
-
-MIT
