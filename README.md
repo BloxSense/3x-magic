@@ -1,42 +1,36 @@
+# ⚡ 3X-UI Quick Deploy (VLESS Reality + Hysteria2)
 
-# ⚡ 3X-UI Quick Deploy (VLESS Reality + Hysteria 2)
+Personal automated installer for fast **VLESS Reality** & **Hysteria2** setup via [3x-ui](https://github.com/MHSanaei/3x-ui).
 
-Personal automated scripts for fast **VLESS Reality** & **Hysteria 2** setup via **3X-UI**.
+## Supported Linux distributions
 
----
+![Ubuntu](https://img.shields.io/badge/Ubuntu-20.04%2B-E95420?logo=ubuntu&logoColor=white)
+![Debian](https://img.shields.io/badge/Debian-11%2B-A81D33?logo=debian&logoColor=white)
+![CentOS](https://img.shields.io/badge/CentOS-9%2B-262577?logo=centos&logoColor=white)
+![AlmaLinux](https://img.shields.io/badge/AlmaLinux-9%2B-000000?logo=almalinux&logoColor=white)
+![Rocky](https://img.shields.io/badge/Rocky_Linux-9%2B-10B981?logo=rockylinux&logoColor=white)
 
-## 🚀 Usage & Quick Start
+## Install
 
-Run the desired command directly on your clean Linux VPS (Ubuntu / Debian / CentOS):
+Before installation, it is strongly recommended to upgrade your system and reboot beforehand.
 
-### 1️⃣ Basic Install
-> Installs 3X-UI with auto-configured VLESS Reality (`ozon.ru`/`games.mail.ru`) and Hysteria 2.
+Run on a clean VPS as root:
 
 ```bash
 bash <(curl -Ls https://raw.githubusercontent.com/BloxSense/3x-magic/main/3xinstall.sh)
-
 ```
 
----
+After launching, just follow the interactive prompts (SNI choice, client vs. personal install, panel port) — everything else (credentials, keys, inbounds, certificate) is generated automatically.
 
-### 2️⃣ Extended Setup
+## Key Features
 
-> Allows setting a **custom panel port** and configuring additional options.
+- 🔒 **VLESS Reality** — TCP transport, `xtls-rprx-vision` flow, `ozon.ru` / `games.mail.ru` SNI
+- 🚀 **Hysteria2** — `salamander` UDP-obfuscation, ALPN h3
+- 🌐 **Automatic TLS** — Let's Encrypt IP certificate (short-lived, auto-renewed via `acme.sh` cron), falls back to self-signed if issuance fails
+- 📶 **TCP BBR** — buffer & congestion control tuning on supported kernels
+- 🎲 **100% unique data** — UUIDs, passwords, keys, panel path regenerated on every run
+- 💾 **Credential storage** — all links, passwords, and panel access saved to `/root/3x-ui.txt`
 
-```bash
-bash <(curl -Ls https://raw.githubusercontent.com/BloxSense/3x-magic/main/3xinstall.sh) --extend
+## License
 
-```
-
----
-
-## ✨ Key Features
-
-* 🔒 **VLESS Reality**: Pre-configured with `RAW` transport, `xtls-rprx-vision` flow & `ozon.ru`/`games.mail.ru` SNI.
-* 🚀 **Hysteria 2**: Configured with `Salamander` UDP-obfuscation & local SSL certificates.
-* 🎲 **100% Unique Data**: Automatically generates unique UUIDs, passwords, keys, and panel paths on every run.
-* 📊 **Credential Storage**: Saves all generated access links, passwords, and QR codes to `/root/3x-ui.txt`.
-
-```
-
-```
+MIT
